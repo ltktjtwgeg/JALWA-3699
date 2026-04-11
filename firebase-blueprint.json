@@ -1,0 +1,105 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and wallet information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "username": { "type": "string" },
+        "balance": { "type": "number" },
+        "vipLevel": { "type": "number" },
+        "inviteCode": { "type": "string" },
+        "invitedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "role": { "type": "string", "enum": ["user", "admin"] }
+      },
+      "required": ["uid", "phoneNumber", "balance", "role"]
+    },
+    "Game": {
+      "title": "Game",
+      "description": "A single round of the color prediction game",
+      "type": "object",
+      "properties": {
+        "periodId": { "type": "string" },
+        "gameType": { "type": "string", "enum": ["30s", "1m", "3m", "5m"] },
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": "string", "format": "date-time" },
+        "resultNumber": { "type": "number" },
+        "resultColor": { "type": "string" },
+        "resultSize": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "completed"] }
+      },
+      "required": ["periodId", "gameType", "startTime", "endTime", "status"]
+    },
+    "Bet": {
+      "title": "Bet",
+      "description": "A bet placed by a user on a game round",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "periodId": { "type": "string" },
+        "gameType": { "type": "string" },
+        "selection": { "type": "string" },
+        "amount": { "type": "number" },
+        "multiplier": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "won", "lost"] },
+        "winAmount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "periodId", "gameType", "selection", "amount", "multiplier", "totalAmount", "status"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Wallet transaction records",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "type": { "type": "string", "enum": ["deposit", "withdraw", "bet", "win"] },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "completed", "failed"] },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "type", "amount", "status", "createdAt"]
+    },
+    "GameControl": {
+      "title": "GameControl",
+      "description": "Admin controls for forcing game results",
+      "type": "object",
+      "properties": {
+        "gameType": { "type": "string", "enum": ["30s", "1m", "3m", "5m"] },
+        "targetNumber": { "type": "number" },
+        "targetSize": { "type": "string", "enum": ["Big", "Small"] },
+        "status": { "type": "string", "enum": ["pending", "completed", "cancelled"] },
+        "usedInPeriod": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["gameType", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/games/{gameId}": {
+      "schema": "Game",
+      "description": "Game rounds"
+    },
+    "/bets/{betId}": {
+      "schema": "Bet",
+      "description": "User bets"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Financial transactions"
+    },
+    "/game_controls/{controlId}": {
+      "schema": "GameControl",
+      "description": "Admin game controls"
+    }
+  }
+}
