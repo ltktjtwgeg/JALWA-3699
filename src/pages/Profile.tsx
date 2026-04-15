@@ -65,11 +65,11 @@ export default function Profile() {
   return (
     <div className="flex flex-col min-h-screen pb-24 bg-[#1a1d21] text-white">
       {/* Profile Header Section */}
-      <div className="relative pt-12 pb-24 px-6 bg-gradient-to-b from-[#f3d078] via-[#d4af37] to-[#b8860b]">
+      <div className="relative pt-12 pb-24 px-6 bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500">
         <div className="flex items-center gap-4 mb-6">
           <div className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md border-2 border-white/40 overflow-hidden flex items-center justify-center shadow-xl">
             <img 
-              src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.username}`} 
+              src={user?.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${user?.username}`} 
               alt="avatar" 
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
@@ -77,21 +77,24 @@ export default function Profile() {
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <h2 className="text-xl font-black tracking-tight text-[#5d4037] uppercase">{user?.username || 'MEMBER'}</h2>
+              <h2 className="text-xl font-black tracking-tight text-white uppercase">{user?.nickname || user?.username || 'MEMBER'}</h2>
               <div className="bg-white/30 backdrop-blur-md px-2 py-0.5 rounded flex items-center gap-1 border border-white/40">
-                <Trophy className="w-3 h-3 text-yellow-600" />
-                <span className="text-[10px] font-bold text-[#5d4037]">VIP{user?.vipLevel || 0}</span>
+                <Trophy className="w-3 h-3 text-yellow-300" />
+                <span className="text-[10px] font-bold text-white">VIP{user?.vipLevel || 0}</span>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-[#5d4037]/80 text-xs mb-1">
+            <div className="flex items-center gap-2 text-white/80 text-xs mb-1">
               <span className="font-bold">UID</span>
               <span className="font-mono">|</span>
               <span className="font-mono font-bold">{user?.inviteCode}</span>
-              <button onClick={handleCopyUid} className="p-1 hover:bg-black/10 rounded">
+              <button onClick={handleCopyUid} className="p-1 hover:bg-white/10 rounded">
                 <Copy className="w-3 h-3" />
               </button>
             </div>
-            <p className="text-[10px] text-[#5d4037]/70 font-medium">
+            <p className="text-[10px] text-white/70 font-medium">
+              {new Date().toLocaleString()}
+            </p>
+            <p className="text-[10px] text-white/70 font-medium">
               Last login: {user?.lastLoginAt?.toDate().toLocaleString() || 'N/A'}
             </p>
           </div>
@@ -128,7 +131,7 @@ export default function Profile() {
               </div>
               <span className="text-[10px] font-bold text-gray-400">Deposit</span>
             </div>
-            <div onClick={() => navigate('/wallet')} className="flex flex-col items-center gap-2 cursor-pointer group">
+            <div onClick={() => navigate('/withdraw')} className="flex flex-col items-center gap-2 cursor-pointer group">
               <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center group-hover:bg-blue-500/20 transition-colors">
                 <ArrowUpCircle className="w-6 h-6 text-blue-500" />
               </div>
@@ -188,18 +191,22 @@ export default function Profile() {
         {/* List Menu */}
         <div className="bg-[#2a2e35] rounded-3xl overflow-hidden border border-gray-800">
           {[
-            { icon: Bell, label: 'Notification', count: 6 },
-            { icon: Gift, label: 'Gifts' },
-            { icon: BarChart3, label: 'Game statistics' },
-            { icon: Globe, label: 'Language', extra: 'English' },
+            { icon: Bell, label: 'Notification', path: '/notifications' },
+            { icon: Gift, label: 'Gifts', path: '/gift' },
+            { icon: BarChart3, label: 'Game statistics', path: '/game-statistics' },
+            { icon: Globe, label: 'Language', extra: 'English', path: '/language' },
+            ...(user?.role === 'admin' || user?.email === "triloksinghrathore51@gmail.com" ? [{ icon: Settings, label: 'Admin Panel', path: '/admin' }] : []),
           ].map((item, idx) => (
-            <div key={idx} className="flex items-center justify-between p-4 border-b border-gray-800/50 last:border-0 hover:bg-white/5 cursor-pointer">
+            <div 
+              key={idx} 
+              onClick={() => item.path && navigate(item.path)}
+              className="flex items-center justify-between p-4 border-b border-gray-800/50 last:border-0 hover:bg-white/5 cursor-pointer"
+            >
               <div className="flex items-center gap-3">
                 <item.icon className="w-5 h-5 text-purple-400" />
                 <span className="text-sm font-medium text-gray-300">{item.label}</span>
               </div>
               <div className="flex items-center gap-2">
-                {item.count && <span className="bg-rose-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">{item.count}</span>}
                 {item.extra && <span className="text-xs text-gray-500">{item.extra}</span>}
                 <ChevronRight className="w-4 h-4 text-gray-600" />
               </div>
@@ -212,14 +219,18 @@ export default function Profile() {
           <h4 className="text-sm font-bold text-gray-400 mb-6">Service center</h4>
           <div className="grid grid-cols-3 gap-y-8">
             {[
-              { icon: Settings, label: 'Settings' },
-              { icon: MessageSquare, label: 'Feedback' },
-              { icon: Megaphone, label: 'Announcement' },
-              { icon: Headphones, label: 'Customer Service' },
+              { icon: Settings, label: 'Settings', path: '/settings' },
+              { icon: MessageSquare, label: 'Feedback', path: '/feedback' },
+              { icon: Megaphone, label: 'Announcement', path: '/announcements' },
+              { icon: Headphones, label: 'Customer Service', path: '/customer-service' },
               { icon: BookOpen, label: "Beginner's Guide" },
-              { icon: Info, label: 'About us' },
+              { icon: Info, label: 'About us', path: '/about' },
             ].map((item, idx) => (
-              <div key={idx} className="flex flex-col items-center gap-2 cursor-pointer group">
+              <div 
+                key={idx} 
+                onClick={() => item.path && navigate(item.path)}
+                className="flex flex-col items-center gap-2 cursor-pointer group"
+              >
                 <div className="w-10 h-10 bg-gray-800 rounded-xl flex items-center justify-center group-hover:bg-purple-500/20 transition-colors">
                   <item.icon className="w-5 h-5 text-purple-400" />
                 </div>

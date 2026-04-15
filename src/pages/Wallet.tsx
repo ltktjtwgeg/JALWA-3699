@@ -54,7 +54,7 @@ export default function Wallet() {
   const [loading, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw'>('deposit');
-  const [withdrawMethod, setWithdrawMethod] = useState<'bank' | 'upi' | 'usdt'>('upi');
+  const [withdrawMethod, setWithdrawMethod] = useState<'bank' | 'usdt'>('bank');
   const [showAddPayment, setShowAddPayment] = useState(false);
   const [showPaymentList, setShowPaymentList] = useState(false);
   const [showAddBank, setShowAddBank] = useState(false);
@@ -196,6 +196,9 @@ export default function Wallet() {
 
   const handleDeposit = async () => {
     if (!user || !amount || parseFloat(amount) <= 0) return toast.error('Enter valid amount');
+    const depositAmount = parseFloat(amount);
+    if (depositAmount < 110) return toast.error('Minimum deposit amount is ₹110.00');
+    
     setLoading(true);
     try {
       const depositAmount = parseFloat(amount);
@@ -259,12 +262,6 @@ export default function Wallet() {
     if (user.balance < withdrawAmount) return toast.error('Insufficient balance');
     
     // Check if payment method exists
-    if (withdrawMethod === 'upi') {
-      if (!upiName || !upiId || !upiPhone) {
-        return toast.error('Please enter all UPI details');
-      }
-    }
-
     const hasBank = user.paymentMethods?.some(m => m.type === 'bank');
 
     if (withdrawMethod === 'bank' && !hasBank) {
@@ -276,14 +273,10 @@ export default function Wallet() {
     try {
       let description = `Withdrawal via ${withdrawMethod.toUpperCase()}`;
       
-      if (withdrawMethod === 'upi') {
-        description += ` (${upiId} - ${upiName} - ${upiPhone})`;
-      } else {
-        const selectedMethod = user.paymentMethods?.find(m => m.type === withdrawMethod);
-        if (selectedMethod) {
-          if (withdrawMethod === 'bank') {
-            description += ` (${selectedMethod.bankName} - ${selectedMethod.bankAccount})`;
-          }
+      const selectedMethod = user.paymentMethods?.find(m => m.type === withdrawMethod);
+      if (selectedMethod) {
+        if (withdrawMethod === 'bank') {
+          description += ` (${selectedMethod.bankName} - ${selectedMethod.bankAccount})`;
         }
       }
 
@@ -376,37 +369,16 @@ export default function Wallet() {
           </button>
         </div>
 
-        {activeTab === 'withdraw' && (
+        {activeTab === 'withdraw' ? (
           <>
-            {/* ARPay Banner */}
-            <div className="bg-[#2a2e35] rounded-2xl p-4 flex items-center gap-4 border border-gray-800">
-              <div className="w-12 h-12 bg-yellow-500/20 rounded-xl flex items-center justify-center">
-                <span className="text-2xl font-black text-yellow-500">A</span>
-              </div>
-              <div>
-                <h4 className="font-bold text-sm">ARPay</h4>
-                <p className="text-[10px] text-gray-400">Supports UPI for fast payment</p>
-              </div>
-            </div>
-
             {/* Payment Methods */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <button 
                 onClick={() => setWithdrawMethod('bank')}
                 className={`flex flex-col items-center gap-2 p-4 rounded-2xl border transition-all ${withdrawMethod === 'bank' ? 'bg-gradient-to-br from-blue-500 to-indigo-600 border-transparent shadow-lg' : 'bg-[#2a2e35] border-gray-800 text-gray-500'}`}
               >
                 <CreditCard className="w-6 h-6" />
                 <span className="text-[10px] font-bold uppercase">Bank Card</span>
-              </button>
-              <button 
-                onClick={() => setWithdrawMethod('upi')}
-                className={`flex flex-col items-center gap-2 p-4 rounded-2xl border transition-all ${withdrawMethod === 'upi' ? 'bg-gradient-to-br from-orange-400 to-rose-500 border-transparent shadow-lg' : 'bg-[#2a2e35] border-gray-800 text-gray-500'}`}
-              >
-                <div className="relative">
-                  <span className="text-lg font-black italic">UPI</span>
-                  <div className="absolute -inset-1 border border-white/20 rounded" />
-                </div>
-                <span className="text-[10px] font-bold uppercase">UPI</span>
               </button>
               <button 
                 onClick={() => setWithdrawMethod('usdt')}
@@ -418,62 +390,6 @@ export default function Wallet() {
                 <span className="text-[10px] font-bold uppercase">USDT</span>
               </button>
             </div>
-
-            {/* UPI Details Form */}
-            {withdrawMethod === 'upi' && (
-              <div className="bg-[#1f2228] p-6 rounded-3xl border border-gray-800 space-y-4">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-8 h-8 bg-orange-500/20 rounded-lg flex items-center justify-center">
-                    <span className="font-black italic text-orange-500 text-xs">UPI</span>
-                  </div>
-                  <h3 className="font-bold text-sm">UPI Information</h3>
-                </div>
-                
-                <div className="space-y-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase ml-1">UPI Name</label>
-                    <div className="relative">
-                      <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-                      <input 
-                        type="text"
-                        placeholder="Enter UPI name"
-                        className="w-full bg-gray-800/50 border-none rounded-xl py-3 pl-10 pr-4 text-sm outline-none focus:ring-1 focus:ring-purple-500"
-                        value={upiName}
-                        onChange={(e) => setUpiName(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase ml-1">UPI ID</label>
-                    <div className="relative">
-                      <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-                      <input 
-                        type="text"
-                        placeholder="Enter UPI ID"
-                        className="w-full bg-gray-800/50 border-none rounded-xl py-3 pl-10 pr-4 text-sm outline-none focus:ring-1 focus:ring-purple-500"
-                        value={upiId}
-                        onChange={(e) => setUpiId(e.target.value)}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase ml-1">Phone Number</label>
-                    <div className="relative">
-                      <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-                      <input 
-                        type="tel"
-                        placeholder="Enter phone number"
-                        className="w-full bg-gray-800/50 border-none rounded-xl py-3 pl-10 pr-4 text-sm outline-none focus:ring-1 focus:ring-purple-500"
-                        value={upiPhone}
-                        onChange={(e) => setUpiPhone(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Add Bank Button */}
             {withdrawMethod === 'bank' && (
@@ -488,6 +404,16 @@ export default function Wallet() {
               </button>
             )}
           </>
+        ) : (
+          <div className="bg-[#1f2228] p-6 rounded-3xl border border-gray-800 space-y-4">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-8 h-8 bg-purple-500/20 rounded-lg flex items-center justify-center">
+                <CreditCard className="w-4 h-4 text-purple-500" />
+              </div>
+              <h3 className="font-bold text-sm">Deposit Information</h3>
+            </div>
+            <p className="text-xs text-gray-400">Please enter the amount you wish to deposit. You will be redirected to the payment gateway.</p>
+          </div>
         )}
 
         {/* Amount Input Section */}
@@ -653,106 +579,6 @@ export default function Wallet() {
         )}
       </AnimatePresence>
 
-      {/* Add UPI Modal */}
-      <AnimatePresence>
-        {showAddPayment && (
-          <motion.div 
-            initial={{ x: '100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '100%' }}
-            className="fixed inset-0 z-[70] bg-[#1a1d21] flex flex-col"
-          >
-            <div className="p-4 flex items-center gap-4 border-b border-gray-800">
-              <button onClick={() => setShowAddPayment(false)} className="p-2 hover:bg-gray-800 rounded-full">
-                <ChevronLeft className="w-6 h-6" />
-              </button>
-              <h2 className="font-bold text-lg">Payment method</h2>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6 space-y-8">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-orange-500/20 rounded-xl flex items-center justify-center">
-                  <span className="font-black italic text-orange-500">UPI</span>
-                </div>
-                <h3 className="text-lg font-bold">Information UPI</h3>
-              </div>
-
-              <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-sm font-bold text-gray-300">UPI Name</label>
-                  <div className="relative">
-                    <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-                    <input 
-                      type="text"
-                      placeholder="Please enter UPI name"
-                      className="w-full bg-[#2a2e35] border-none rounded-xl py-4 pl-12 pr-4 text-sm outline-none focus:ring-2 focus:ring-purple-500"
-                      value={upiName}
-                      onChange={(e) => setUpiName(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-bold text-gray-300">phone number</label>
-                  <div className="relative">
-                    <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-                    <input 
-                      type="tel"
-                      placeholder="Please enter the phone number"
-                      className="w-full bg-[#2a2e35] border-none rounded-xl py-4 pl-12 pr-4 text-sm outline-none focus:ring-2 focus:ring-purple-500"
-                      value={upiPhone}
-                      onChange={(e) => setUpiPhone(e.target.value)}
-                    />
-                  </div>
-                  <p className="text-[10px] text-blue-400 flex gap-1">
-                    <div className="w-3 h-3 rounded-full border border-blue-400 flex items-center justify-center text-[8px] shrink-0">i</div>
-                    For the security of your account, please fill in your real mobile phone number
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-bold text-gray-300">UPI ID</label>
-                  <div className="relative">
-                    <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-                    <input 
-                      type="text"
-                      placeholder="Please enter your UPI ID"
-                      className="w-full bg-[#2a2e35] border-none rounded-xl py-4 pl-12 pr-4 text-sm outline-none focus:ring-2 focus:ring-purple-500"
-                      value={upiId}
-                      onChange={(e) => setUpiId(e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-bold text-gray-300">Confirm UPI ID</label>
-                  <div className="relative">
-                    <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-                    <input 
-                      type="text"
-                      placeholder="Please enter your UPI ID"
-                      className="w-full bg-[#2a2e35] border-none rounded-xl py-4 pl-12 pr-4 text-sm outline-none focus:ring-2 focus:ring-purple-500"
-                      value={confirmUpiId}
-                      onChange={(e) => setConfirmUpiId(e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-6">
-              <button 
-                disabled={loading}
-                onClick={handleSaveUpi}
-                className="w-full py-4 bg-gradient-to-r from-gray-200 to-gray-400 text-gray-900 font-black text-lg rounded-xl shadow-xl hover:from-white hover:to-gray-300 transition-all disabled:opacity-50"
-              >
-                {loading ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
       {/* Add Bank Modal */}
       <AnimatePresence>
         {showAddBank && (
@@ -823,10 +649,16 @@ export default function Wallet() {
                 </label>
                 <input 
                   type="tel"
+                  maxLength={10}
                   placeholder="Please enter your phone number"
                   className="w-full bg-[#2a2e35] border-none rounded-xl py-4 px-4 text-sm outline-none focus:ring-2 focus:ring-purple-500"
                   value={bankPhone}
-                  onChange={(e) => setBankPhone(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, '');
+                    if (val.length <= 10) {
+                      setBankPhone(val);
+                    }
+                  }}
                 />
               </div>
 

@@ -8,26 +8,43 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { Toaster, toast } from 'sonner';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, onSnapshot, getDocFromServer } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './firebase';
-import { User as AppUser } from './types';
+import { User as AppUser, GameType } from './types';
 import './index.css';
 
 // Pages
 import Home from './pages/Home';
+import Activity from './pages/Activity';
 import GamePage from './pages/GamePage';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Profile from './pages/Profile';
 import Wallet from './pages/Wallet';
+import Withdraw from './pages/Withdraw';
+import AddBankCard from './pages/AddBankCard';
+import AddUPI from './pages/AddUPI';
+import AddUSDT from './pages/AddUSDT';
 import Admin from './pages/Admin';
 import History from './pages/History';
 import Promotion from './pages/Promotion';
+import Settings from './pages/Settings';
+import Language from './pages/Language';
+import Gift from './pages/Gift';
+import Notifications from './pages/Notifications';
+import About from './pages/About';
+import Confidentiality from './pages/Confidentiality';
+import RiskDisclosure from './pages/RiskDisclosure';
+import Announcements from './pages/Announcements';
+import Feedback from './pages/Feedback';
+import CustomerService from './pages/CustomerService';
+import GameStatistics from './pages/GameStatistics';
 
 const AuthContext = createContext<{
   user: AppUser | null;
   loading: boolean;
   firebaseUser: FirebaseUser | null;
+  refreshUser: () => Promise<void>;
 } | null>(null);
 
 export const useAuth = () => {
@@ -73,8 +90,17 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [firebaseUser]);
 
+  const refreshUser = async () => {
+    if (firebaseUser) {
+      const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
+      if (userDoc.exists()) {
+        setUser(userDoc.data() as AppUser);
+      }
+    }
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, firebaseUser }}>
+    <AuthContext.Provider value={{ user, loading, firebaseUser, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
@@ -94,17 +120,25 @@ function GameManager() {
   useEffect(() => {
     if (!firebaseUser) return;
 
-    const interval = setInterval(() => {
-      ['30s', '1m', '3m', '5m'].forEach(async (type) => {
-        try {
-          await processGameResults(type as any);
-          await settleUserBets(firebaseUser.uid, type as any);
-        } catch (error) {
-          console.error(`Error in GameManager for ${type}:`, error);
+    let isRunning = false;
+    const runManager = async () => {
+      if (isRunning) return;
+      isRunning = true;
+      
+      try {
+        const types: GameType[] = ['30s', '1m', '3m', '5m'];
+        for (const type of types) {
+          await processGameResults(type);
+          await settleUserBets(firebaseUser.uid, type);
         }
-      });
-    }, 5000);
+      } catch (error) {
+        console.error('Error in GameManager:', error);
+      } finally {
+        isRunning = false;
+      }
+    };
 
+    const interval = setInterval(runManager, 1000);
     return () => clearInterval(interval);
   }, [firebaseUser]);
 
@@ -115,7 +149,7 @@ export default function App() {
   useEffect(() => {
     async function testConnection() {
       try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
+        await getDoc(doc(db, 'test', 'connection'));
       } catch (error) {
         if (error instanceof Error && error.message.includes('the client is offline')) {
           console.error("Please check your Firebase configuration.");
@@ -128,18 +162,34 @@ export default function App() {
   return (
     <AuthProvider>
       <GameManager />
-      <div className="min-h-screen bg-[#1a1d21] text-white font-sans max-w-md mx-auto relative shadow-2xl overflow-hidden">
+      <div className="min-h-screen bg-[#1a1d21] text-white font-sans max-w-[430px] mx-auto relative shadow-2xl">
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/activity" element={<PrivateRoute><Activity /></PrivateRoute>} />
             <Route path="/" element={<PrivateRoute><Home /></PrivateRoute>} />
             <Route path="/game/:type" element={<PrivateRoute><GamePage /></PrivateRoute>} />
             <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
             <Route path="/wallet" element={<PrivateRoute><Wallet /></PrivateRoute>} />
+            <Route path="/withdraw" element={<PrivateRoute><Withdraw /></PrivateRoute>} />
+            <Route path="/withdraw/add-bank" element={<PrivateRoute><AddBankCard /></PrivateRoute>} />
+            <Route path="/withdraw/add-upi" element={<PrivateRoute><AddUPI /></PrivateRoute>} />
+            <Route path="/withdraw/add-usdt" element={<PrivateRoute><AddUSDT /></PrivateRoute>} />
             <Route path="/admin" element={<PrivateRoute><Admin /></PrivateRoute>} />
             <Route path="/history/:type" element={<PrivateRoute><History /></PrivateRoute>} />
             <Route path="/promotion" element={<PrivateRoute><Promotion /></PrivateRoute>} />
+            <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
+            <Route path="/language" element={<PrivateRoute><Language /></PrivateRoute>} />
+            <Route path="/gift" element={<PrivateRoute><Gift /></PrivateRoute>} />
+            <Route path="/notifications" element={<PrivateRoute><Notifications /></PrivateRoute>} />
+            <Route path="/about" element={<PrivateRoute><About /></PrivateRoute>} />
+            <Route path="/about/confidentiality" element={<PrivateRoute><Confidentiality /></PrivateRoute>} />
+            <Route path="/about/risk-disclosure" element={<PrivateRoute><RiskDisclosure /></PrivateRoute>} />
+            <Route path="/announcements" element={<PrivateRoute><Announcements /></PrivateRoute>} />
+            <Route path="/feedback" element={<PrivateRoute><Feedback /></PrivateRoute>} />
+            <Route path="/customer-service" element={<PrivateRoute><CustomerService /></PrivateRoute>} />
+            <Route path="/game-statistics" element={<PrivateRoute><GameStatistics /></PrivateRoute>} />
           </Routes>
         </BrowserRouter>
         <Toaster position="top-center" richColors />

@@ -5,11 +5,13 @@
 // Collection: users
 // Fields:
 //   - uid: string (required, immutable)
-//   - phoneNumber: string (required)
-//   - username: string (optional)
+//   - email: string (optional)
+//   - phoneNumber: string (optional)
+//   - numericId: number (required)
+//   - username: string (required)
 //   - balance: number (required, >= 0)
-//   - vipLevel: number (optional)
-//   - inviteCode: string (optional)
+//   - vipLevel: number (required)
+//   - inviteCode: string (required)
 //   - invitedBy: string (optional)
 //   - createdAt: timestamp (required)
 //   - role: string (required, 'user' or 'admin')
@@ -76,15 +78,11 @@ service cloud.firestore {
     }
 
     function isValidUser(data) {
-      return data.uid is string &&
-             data.phoneNumber is string &&
-             data.username is string &&
-             data.balance is number && data.balance >= 0 &&
-             data.vipLevel is number &&
-             data.inviteCode is string &&
-             (data.invitedBy == null || data.invitedBy is string) &&
-             data.role in ['user', 'admin'] &&
-             data.createdAt is timestamp;
+      return (!('uid' in data) || data.uid is string) &&
+             (!('balance' in data) || (data.balance is number && data.balance >= 0)) &&
+             (!('totalDeposits' in data) || data.totalDeposits is number) &&
+             (!('totalBets' in data) || data.totalBets is number) &&
+             (!('isDemo' in data) || data.isDemo is bool);
     }
 
     function isValidGame(data) {
@@ -93,19 +91,25 @@ service cloud.firestore {
              data.startTime is timestamp &&
              data.endTime is timestamp &&
              data.status in ['active', 'completed'] &&
-             (data.resultNumber == null || data.resultNumber is number) &&
+              (data.resultNumber == null || data.resultNumber is number) &&
+              (data.resultColor == null || data.resultColor is string) &&
+              (data.resultSize == null || data.resultSize is string) &&
              (data.createdAt == null || data.createdAt is timestamp);
     }
 
     function isValidBet(data) {
       return data.uid is string &&
              data.periodId is string &&
-             data.gameType is string &&
+             data.gameType in ['30s', '1m', '3m', '5m'] &&
              data.selection is string &&
              data.amount is number && data.amount > 0 &&
              data.multiplier is number && data.multiplier > 0 &&
              data.totalAmount is number &&
              data.status in ['pending', 'win', 'lost'] &&
+             (data.fee == null || data.fee is number) &&
+             (data.netAmount == null || data.netAmount is number) &&
+             (data.winAmount == null || data.winAmount is number) &&
+             (data.settledAt == null || data.settledAt is timestamp) &&
              data.createdAt is timestamp;
     }
 
@@ -114,6 +118,45 @@ service cloud.firestore {
              data.type in ['deposit', 'withdraw', 'bet', 'win'] &&
              data.amount is number &&
              data.status in ['pending', 'completed', 'failed'] &&
+             (data.description == null || data.description is string) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidGiftCode(data) {
+      return data.code is string &&
+             data.amount is number && data.amount > 0 &&
+             data.isActive is bool &&
+             (data.maxUses == null || data.maxUses is number) &&
+             (data.currentUses == null || data.currentUses is number) &&
+             (data.usedBy == null || data.usedBy is list);
+    }
+
+    function isValidGiftHistory(data) {
+      return data.userId is string &&
+             data.code is string &&
+             data.amount is number &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidAnnouncement(data) {
+      return data.title is string &&
+             data.content is string &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidFeedback(data) {
+      return data.userId is string &&
+             data.content is string &&
+             data.createdAt is timestamp &&
+             data.status in ['pending', 'resolved'];
+    }
+
+    function isValidPlatformFee(data) {
+      return data.betId is string &&
+             data.uid is string &&
+             data.amount is number &&
+             data.periodId is string &&
+             data.gameType in ['30s', '1m', '3m', '5m'] &&
              data.createdAt is timestamp;
     }
 
@@ -123,16 +166,23 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
+      // Allow checking if username exists (limited query)
+      allow list: if isAuthenticated() && 
+                    request.query.limit <= 5 && 
+                    (request.query.filters.size() == 1 && 'username' in request.query.filters);
       allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
                       (isOwner(userId) && request.resource.data.role == 'user' || isAdmin());
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
-                      ((isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin());
+                      ((isOwner(userId) && (!('role' in request.resource.data) || !('role' in resource.data) || request.resource.data.role == resource.data.role)) || isAdmin());
     }
 
     match /games/{gameId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidGame(request.resource.data);
-      allow update: if isAdmin() || (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'resultNumber', 'resultColor', 'resultSize']) && request.resource.data.status == 'completed');
+      allow update: if isAdmin() || (isAuthenticated() && 
+                      request.resource.data.status == 'completed' &&
+                      request.resource.data.periodId == resource.data.periodId &&
+                      request.resource.data.gameType == resource.data.gameType);
       allow delete: if isAdmin();
     }
 
@@ -147,14 +197,58 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && isValidBet(request.resource.data) && 
                       request.resource.data.uid == request.auth.uid;
-      allow update: if (isOwner(resource.data.uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'winAmount'])) || isAdmin();
+      allow update: if (isOwner(resource.data.uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'winAmount', 'settledAt'])) || isAdmin();
+    }
+
+    match /platform_fees/{feeId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && isValidPlatformFee(request.resource.data);
     }
 
     match /transactions/{transactionId} {
       allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && isValidTransaction(request.resource.data) && 
-                      request.resource.data.uid == request.auth.uid;
+                      request.resource.data.uid == request.auth.uid &&
+                      (request.resource.data.type != 'withdraw' || (
+                        request.resource.data.amount >= 110 &&
+                        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('totalBets', 0) >= get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('totalDeposits', 0)
+                      ));
       allow update: if isAdmin() && isValidTransaction(request.resource.data);
+    }
+
+    match /giftCodes/{codeId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidGiftCode(request.resource.data);
+      allow update: if isAdmin() || (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['currentUses', 'usedBy']));
+      allow delete: if isAdmin();
+    }
+
+    match /giftHistory/{historyId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAuthenticated() && isValidGiftHistory(request.resource.data) && 
+                      request.resource.data.userId == request.auth.uid;
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /feedback/{feedbackId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && isValidFeedback(request.resource.data) && 
+                      request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /metadata/counters {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    match /metadata/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
   }
 }

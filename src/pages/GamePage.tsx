@@ -15,7 +15,13 @@ import {
   Check,
   Wallet,
   Volume2,
-  VolumeX
+  VolumeX,
+  RefreshCw,
+  Megaphone,
+  BookOpen,
+  BarChart3,
+  ArrowUpCircle,
+  ArrowDownCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -30,11 +36,13 @@ import {
   doc,
   updateDoc,
   increment,
-  runTransaction
+  runTransaction,
+  getDoc
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Game, Bet, GameType } from '../types';
 import { toast } from 'sonner';
+import GameBall from '../components/GameBall';
 
 const COLORS = {
   GREEN: 'bg-emerald-500',
@@ -56,18 +64,19 @@ const NUMBER_COLORS: Record<number, string> = {
 };
 
 const SOUNDS = {
-  TICK: 'https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3',
-  WIN: 'https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3',
-  LOSS: 'https://assets.mixkit.co/active_storage/sfx/253/253-preview.mp3',
+  TICK: '/sounds/countdown.mp3',
+  WIN: '/sounds/results/win.mp3',
+  LOSS: '/sounds/results/loss.mp3',
   BET: 'https://assets.mixkit.co/active_storage/sfx/2568/2568-preview.mp3',
 };
 
 export default function GamePage() {
   const { type } = useParams<{ type: string }>();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const navigate = useNavigate();
   const [timeLeft, setTimeLeft] = useState(0);
   const [periodId, setPeriodId] = useState('');
+  const currentPeriodRef = useRef('');
   const [history, setHistory] = useState<Game[]>([]);
   const [myBets, setMyBets] = useState<Bet[]>([]);
   const [showBetModal, setShowBetModal] = useState(false);
@@ -75,16 +84,75 @@ export default function GamePage() {
   const [betAmount, setBetAmount] = useState(1);
   const [multiplier, setMultiplier] = useState(1);
   const [isBetting, setIsBetting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'game' | 'my'>('game');
+  const [activeTab, setActiveTab] = useState<'game' | 'chart' | 'my'>('game');
   const [showResultModal, setShowResultModal] = useState(false);
   const [resultData, setResultData] = useState<{ bet: Bet; game: Game } | null>(null);
-  const [lastProcessedPeriod, setLastProcessedPeriod] = useState<string | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const shownBetIds = useRef<Set<string>>(new Set());
   const isFirstLoad = useRef(true);
   const [gamePage, setGamePage] = useState(1);
   const [myPage, setMyPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [agreed, setAgreed] = useState(true);
+  const hasPlayedCountdown = useRef(false);
+  const countdownAudioRef = useRef<HTMLAudioElement | null>(null);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const [linePoints, setLinePoints] = useState<string>("");
+
+  const mountTime = useRef(Date.now());
+
+  // Pre-load countdown sound
+  useEffect(() => {
+    countdownAudioRef.current = new Audio(SOUNDS.TICK);
+    countdownAudioRef.current.load();
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'chart' || history.length === 0) return;
+
+    const calculatePoints = () => {
+      const container = chartContainerRef.current;
+      if (!container) return;
+
+      const rows = container.querySelectorAll('.chart-row');
+      const points: { x: number; y: number }[] = [];
+
+      rows.forEach((row) => {
+        const winningBall = row.querySelector('.winning-ball');
+        if (winningBall) {
+          const rect = winningBall.getBoundingClientRect();
+          const containerRect = container.getBoundingClientRect();
+          
+          points.push({
+            x: rect.left - containerRect.left + rect.width / 2,
+            y: rect.top - containerRect.top + rect.height / 2
+          });
+        }
+      });
+
+      if (points.length > 1) {
+        const path = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+        setLinePoints(path);
+      }
+    };
+
+    const timer = setTimeout(calculatePoints, 100);
+    window.addEventListener('resize', calculatePoints);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', calculatePoints);
+    };
+  }, [activeTab, history, gamePage]);
+
+  const gameModes = [
+    { id: '30s', label: 'WinGo 30sec' },
+    { id: '1m', label: 'WinGo 1 Min' },
+    { id: '3m', label: 'WinGo 3 Min' },
+    { id: '5m', label: 'WinGo 5 Min' },
+  ];
+
+  const multipliers = ['Random', 1, 5, 10, 20, 50, 100];
 
   useEffect(() => {
     if (showResultModal) {
@@ -97,8 +165,15 @@ export default function GamePage() {
 
   const playSound = (url: string) => {
     if (isMuted) return;
+    if (url === SOUNDS.TICK && countdownAudioRef.current) {
+      countdownAudioRef.current.currentTime = 0;
+      countdownAudioRef.current.play().catch(err => console.warn('Countdown play failed:', err));
+      return;
+    }
     const audio = new Audio(url);
-    audio.play().catch(() => {});
+    audio.play().catch((err) => {
+      console.warn('Sound play failed:', err);
+    });
   };
 
   const duration = useMemo(() => {
@@ -114,26 +189,41 @@ export default function GamePage() {
   // Timer and Period Logic
   useEffect(() => {
     const updateTimer = () => {
-      const now = Math.floor(Date.now() / 1000);
-      const remaining = duration - (now % duration);
-      setTimeLeft(remaining);
+      const now = Date.now();
+      const seconds = now / 1000;
+      
+      // Calculate round boundaries
+      const roundIndex = Math.floor(seconds / duration);
+      const roundStart = roundIndex * duration;
+      const roundEnd = roundStart + duration;
+      
+      // Calculate remaining time precisely (e.g., 59 down to 0 for a 60s game)
+      const elapsed = seconds % duration;
+      const displayTime = Math.floor(duration - elapsed);
+      
+      setTimeLeft(displayTime);
 
-      const date = new Date();
-      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-      const roundIndex = Math.floor(now / duration);
-      setPeriodId(`${dateStr}${roundIndex}`);
+      // Period ID logic
+      const roundDate = new Date(roundStart * 1000);
+      const dateStr = roundDate.toISOString().slice(0, 10).replace(/-/g, '');
+      const newPeriodId = `${dateStr}${roundIndex}`;
+      
+      if (newPeriodId !== currentPeriodRef.current) {
+        setPeriodId(newPeriodId);
+        currentPeriodRef.current = newPeriodId;
+        hasPlayedCountdown.current = false;
+      }
+
+      // Play sound when displayTime hits 5 (covers 5, 4, 3, 2, 1, 0)
+      // Trigger slightly earlier to account for any delay
+      const preciseTimeLeft = duration - elapsed;
+      if (preciseTimeLeft <= 5.1 && !hasPlayedCountdown.current && !isMuted) {
+        playSound(SOUNDS.TICK);
+        hasPlayedCountdown.current = true;
+      }
     };
 
-    updateTimer();
-    const interval = setInterval(() => {
-      updateTimer();
-      // Play tick sound for last 3 seconds
-      const now = Math.floor(Date.now() / 1000);
-      const remaining = duration - (now % duration);
-      if (remaining <= 3 && remaining > 0) {
-        playSound(SOUNDS.TICK);
-      }
-    }, 1000);
+    const interval = setInterval(updateTimer, 50);
     return () => clearInterval(interval);
   }, [duration, isMuted]);
 
@@ -144,7 +234,7 @@ export default function GamePage() {
       where('gameType', '==', type),
       where('status', '==', 'completed'),
       orderBy('periodId', 'desc'),
-      limit(50)
+      limit(100)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -165,24 +255,22 @@ export default function GamePage() {
       collection(db, 'bets'),
       where('uid', '==', user.uid),
       where('gameType', '==', type),
+      orderBy('createdAt', 'desc'),
       limit(50)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const bets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bet));
       
-      // On first load, mark all currently settled bets as "shown" so they don't trigger popups
-      if (isFirstLoad.current && bets.length > 0) {
+      if (isFirstLoad.current) {
         bets.forEach(bet => {
-          if (bet.status !== 'pending' && bet.id) {
+          if (bet.id) {
             shownBetIds.current.add(bet.id);
           }
         });
         isFirstLoad.current = false;
       }
 
-      // Sort in memory to avoid composite index requirement
-      bets.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
       setMyBets(bets);
     }, (error) => {
       console.error('Bets subscription error:', error);
@@ -195,12 +283,11 @@ export default function GamePage() {
   useEffect(() => {
     if (!myBets.length || !history.length || showResultModal) return;
     
-    // Find the most recent settled bet that hasn't been shown yet
-    // We only care about bets from the last 2 periods to avoid showing very old results
     const latestSettledBet = myBets.find(b => 
       b.id && 
       b.status !== 'pending' && 
-      !shownBetIds.current.has(b.id)
+      !shownBetIds.current.has(b.id) &&
+      b.createdAt.toMillis() > mountTime.current
     );
     
     if (latestSettledBet) {
@@ -210,7 +297,6 @@ export default function GamePage() {
         setResultData({ bet: latestSettledBet, game: gameResult });
         setShowResultModal(true);
         
-        // Play result sound
         if (latestSettledBet.status === 'win') {
           playSound(SOUNDS.WIN);
         } else {
@@ -220,18 +306,9 @@ export default function GamePage() {
     }
   }, [myBets, history, showResultModal]);
 
-  // Separate effect for auto-closing the modal to ensure it's stable
-  useEffect(() => {
-    if (showResultModal) {
-      const timer = setTimeout(() => {
-        setShowResultModal(false);
-      }, 2000); // 2 seconds
-      return () => clearTimeout(timer);
-    }
-  }, [showResultModal]);
-
   const handlePlaceBet = async () => {
     if (!user || !selectedBet) return;
+    if (multiplier <= 0) return toast.error('Please enter a valid quantity');
     const total = betAmount * multiplier;
     if (user.balance < total) return toast.error('Insufficient balance');
     if (timeLeft < 5) return toast.error('Betting closed for this round');
@@ -246,10 +323,11 @@ export default function GamePage() {
         const currentBalance = userSnap.data().balance;
         if (currentBalance < total) throw new Error('Insufficient balance');
 
-        // Deduct balance
-        transaction.update(userRef, { balance: increment(-total) });
+        transaction.update(userRef, { 
+          balance: increment(-total),
+          totalBets: increment(total)
+        });
 
-        // Create bet
         const fee = total * 0.04;
         const netAmount = total - fee;
         const betRef = doc(collection(db, 'bets'));
@@ -267,7 +345,6 @@ export default function GamePage() {
           createdAt: serverTimestamp()
         });
 
-        // Create transaction record
         const transRef = doc(collection(db, 'transactions'));
         transaction.set(transRef, {
           uid: user.uid,
@@ -279,24 +356,125 @@ export default function GamePage() {
         });
       });
 
+      setShowBetModal(false);
       toast.success('Bet placed successfully!');
       playSound(SOUNDS.BET);
-      setShowBetModal(false);
     } catch (error: any) {
+      console.error('Betting error:', error);
       toast.error(error.message || 'Failed to place bet');
     } finally {
       setIsBetting(false);
     }
   };
 
-  const getResultColor = (num: number) => {
-    if (num === 0 || num === 5) return 'Violet';
-    return [1, 3, 7, 9].includes(num) ? 'Green' : 'Red';
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await refreshUser();
+    setTimeout(() => setIsRefreshing(false), 500);
   };
 
-  const getResultSize = (num: number) => {
-    return num >= 5 ? 'Big' : 'Small';
+  const handleRandom = () => {
+    const randomNum = Math.floor(Math.random() * 10);
+    setSelectedBet(randomNum.toString());
+    setShowBetModal(true);
   };
+
+  // Chart Statistics Logic
+  const stats = useMemo(() => {
+    const last100 = history.slice(0, 100);
+    const result = {
+      missing: Array(10).fill(0),
+      avgMissing: Array(10).fill(0),
+      frequency: Array(10).fill(0),
+      maxConsecutive: Array(10).fill(0),
+    };
+
+    if (last100.length === 0) return result;
+
+    // Frequency
+    last100.forEach(game => {
+      if (game.resultNumber !== undefined) {
+        result.frequency[game.resultNumber]++;
+      }
+    });
+
+    // Missing (current streak of not appearing)
+    for (let i = 0; i < 10; i++) {
+      let count = 0;
+      for (const game of last100) {
+        if (game.resultNumber === i) break;
+        count++;
+      }
+      result.missing[i] = count;
+    }
+
+    // Avg Missing & Max Consecutive (Simplified)
+    for (let i = 0; i < 10; i++) {
+      result.avgMissing[i] = Math.floor(100 / (result.frequency[i] + 1));
+      
+      let max = 0;
+      let current = 0;
+      last100.forEach(game => {
+        if (game.resultNumber === i) {
+          current++;
+          max = Math.max(max, current);
+        } else {
+          current = 0;
+        }
+      });
+      result.maxConsecutive[i] = max || 1;
+    }
+
+    return result;
+  }, [history]);
+
+  const getBetTheme = () => {
+    if (selectedBet === 'Big') return {
+      header: "bg-gradient-to-b from-[#ffb347] to-[#ff8c00]",
+      text: "text-[#ff8c00]",
+      solid: "bg-[#ff8c00]",
+      gradient: "bg-gradient-to-r from-[#ffb347] to-[#ff8c00]"
+    };
+    if (selectedBet === 'Small') return {
+      header: "bg-gradient-to-b from-[#7ca6f7] to-[#5a8ef5]",
+      text: "text-[#5a8ef5]",
+      solid: "bg-[#5a8ef5]",
+      gradient: "bg-gradient-to-r from-[#7ca6f7] to-[#5a8ef5]"
+    };
+    
+    const isGreen = selectedBet === 'Green' || (selectedBet !== null && [1, 3, 7, 9].includes(Number(selectedBet)));
+    if (isGreen) return {
+      header: "bg-gradient-to-b from-[#4ade80] to-[#22c55e]",
+      text: "text-[#22c55e]",
+      solid: "bg-[#22c55e]",
+      gradient: "bg-gradient-to-r from-[#4ade80] to-[#22c55e]"
+    };
+    
+    const isRed = selectedBet === 'Red' || (selectedBet !== null && [2, 4, 6, 8].includes(Number(selectedBet)));
+    if (isRed) return {
+      header: "bg-gradient-to-b from-[#f87171] to-[#ef4444]",
+      text: "text-[#ef4444]",
+      solid: "bg-[#ef4444]",
+      gradient: "bg-gradient-to-r from-[#f87171] to-[#ef4444]"
+    };
+    
+    const isViolet = selectedBet === 'Violet' || (selectedBet !== null && [0, 5].includes(Number(selectedBet)));
+    if (isViolet) return {
+      header: "bg-gradient-to-b from-[#c084fc] to-[#a855f7]",
+      text: "text-[#a855f7]",
+      solid: "bg-[#a855f7]",
+      gradient: "bg-gradient-to-r from-[#c084fc] to-[#a855f7]"
+    };
+
+    return {
+      header: "bg-gradient-to-b from-[#7ca6f7] to-[#5a8ef5]",
+      text: "text-[#5a8ef5]",
+      solid: "bg-[#5a8ef5]",
+      gradient: "bg-gradient-to-r from-[#7ca6f7] to-[#5a8ef5]"
+    };
+  };
+
+  const theme = getBetTheme();
 
   return (
     <div className="flex flex-col min-h-screen bg-[#1a1d21] pb-10">
@@ -305,140 +483,338 @@ export default function GamePage() {
         <button onClick={() => navigate('/')} className="p-2 hover:bg-gray-800 rounded-full">
           <ChevronLeft className="w-6 h-6" />
         </button>
-        <h2 className="font-bold text-lg">WINGO {type === '30s' ? '30 sec' : type}</h2>
-        <div 
-          onClick={() => navigate('/wallet')}
-          className="flex items-center gap-2 bg-gray-800/50 px-3 py-1.5 rounded-full border border-gray-700 cursor-pointer hover:bg-gray-800 transition-colors"
-        >
-          <Wallet className="w-4 h-4 text-yellow-500" />
-          <span className="text-sm font-bold text-yellow-500">{formatCurrency(user?.balance || 0)}</span>
+        <div className="flex flex-col items-center">
+          <img 
+            src="/images/logo/logo_new.png" 
+            alt="Logo" 
+            className="h-8 object-contain" 
+            referrerPolicy="no-referrer"
+          />
         </div>
         <div className="flex items-center gap-1">
-          <button 
-            onClick={() => setIsMuted(!isMuted)} 
-            className="p-2 hover:bg-gray-800 rounded-full"
-          >
+          <button onClick={() => setIsMuted(!isMuted)} className="p-2 hover:bg-gray-800 rounded-full">
             {isMuted ? <VolumeX className="w-5 h-5 text-gray-500" /> : <Volume2 className="w-5 h-5 text-purple-400" />}
           </button>
-          <button className="p-2 hover:bg-gray-800 rounded-full">
-            <Info className="w-5 h-5 text-gray-400" />
+          <button onClick={() => navigate('/customer-service')} className="p-1 hover:bg-gray-800 rounded-full">
+            <img 
+              src="/images/icons/customer_care.png" 
+              alt="CS" 
+              className="w-8 h-8 object-contain" 
+              referrerPolicy="no-referrer"
+            />
           </button>
         </div>
       </div>
 
-      {/* Timer Section */}
-      <div className="p-6 bg-gradient-to-b from-[#2a2e35] to-[#1a1d21]">
-        <div className="bg-[#1f2228] rounded-3xl p-6 border border-gray-800 shadow-xl flex items-center justify-between">
-          <div>
-            <p className="text-xs text-gray-500 mb-1">Period ID</p>
-            <h3 className="text-xl font-mono font-bold text-purple-400">{periodId}</h3>
-          </div>
-          <div className="text-right">
-            <p className="text-xs text-gray-500 mb-1 flex items-center justify-end gap-1">
-              <Clock className="w-3 h-3" /> Time Remaining
-            </p>
-            <div className="flex gap-1 justify-end">
-              <div className="bg-gray-800 px-2 py-1 rounded-md text-xl font-mono font-bold text-white">
-                {Math.floor(timeLeft / 60).toString().padStart(2, '0')}
+      {/* Wallet Card */}
+      <div className="px-4 py-4">
+        <div className="relative overflow-hidden rounded-[24px] shadow-xl aspect-[2.4/1] border border-white/10">
+          <img 
+            src="/images/backgrounds/game_top_bg.jpg" 
+            alt="Wallet BG" 
+            className="absolute inset-0 w-full h-full object-cover"
+            referrerPolicy="no-referrer"
+          />
+          <div className="relative h-full flex flex-col justify-between p-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-white/20 rounded-lg backdrop-blur-sm">
+                  <Wallet className="w-4 h-4 text-white" />
+                </div>
+                <span className="text-xs font-bold text-white/90 uppercase tracking-wider">Available Balance</span>
               </div>
-              <div className="text-xl font-bold text-gray-600">:</div>
-              <div className={`bg-gray-800 px-2 py-1 rounded-md text-xl font-mono font-bold ${timeLeft < 10 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
-                {(timeLeft % 60).toString().padStart(2, '0')}
-              </div>
+              <button 
+                onClick={handleRefresh}
+                className={cn("p-1.5 bg-white/20 rounded-full hover:bg-white/30 transition-all backdrop-blur-sm", isRefreshing && "animate-spin")}
+              >
+                <RefreshCw className="w-4 h-4 text-white" />
+              </button>
+            </div>
+            
+            <div className="flex flex-col items-center -mt-2">
+              <h3 className="text-4xl font-black text-white drop-shadow-lg tracking-tight">
+                {formatCurrency(user?.balance || 0)}
+              </h3>
+            </div>
+
+            <div className="flex gap-4">
+              <button 
+                onClick={() => navigate('/wallet/recharge')}
+                className="flex-1 bg-gradient-to-r from-[#ffb347] to-[#ff8c00] text-white py-2.5 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-orange-900/20 active:scale-95 transition-all"
+              >
+                Deposit
+              </button>
+              <button 
+                onClick={() => navigate('/wallet/withdraw')}
+                className="flex-1 bg-white/10 backdrop-blur-md text-white py-2.5 rounded-xl text-xs font-black uppercase tracking-widest border border-white/20 shadow-lg active:scale-95 transition-all"
+              >
+                Withdraw
+              </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Betting Options */}
-      <div className="px-6 space-y-6">
-        {/* Colors */}
-        <div className="grid grid-cols-3 gap-3">
-          <button 
-            onClick={() => { setSelectedBet('Green'); setShowBetModal(true); }}
-            className="bg-emerald-500 hover:bg-emerald-600 py-3 rounded-xl font-bold shadow-lg shadow-emerald-900/20 transition-all"
-          >
-            Green
-          </button>
-          <button 
-            onClick={() => { setSelectedBet('Violet'); setShowBetModal(true); }}
-            className="bg-purple-500 hover:bg-purple-600 py-3 rounded-xl font-bold shadow-lg shadow-purple-900/20 transition-all"
-          >
-            Violet
-          </button>
-          <button 
-            onClick={() => { setSelectedBet('Red'); setShowBetModal(true); }}
-            className="bg-rose-500 hover:bg-rose-600 py-3 rounded-xl font-bold shadow-lg shadow-rose-900/20 transition-all"
-          >
-            Red
-          </button>
-        </div>
-
-        {/* Numbers */}
-        <div className="grid grid-cols-5 gap-2">
-          {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-            <button
-              key={num}
-              onClick={() => { setSelectedBet(num.toString()); setShowBetModal(true); }}
-              className={`${NUMBER_COLORS[num]} aspect-square rounded-full flex items-center justify-center text-xl font-bold shadow-md hover:scale-110 transition-transform`}
-            >
-              {num}
-            </button>
-          ))}
-        </div>
-
-        {/* Big / Small */}
-        <div className="grid grid-cols-2 gap-4">
-          <button 
-            onClick={() => { setSelectedBet('Big'); setShowBetModal(true); }}
-            className="bg-gradient-to-r from-orange-500 to-amber-600 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-orange-900/20"
-          >
-            Big
-          </button>
-          <button 
-            onClick={() => { setSelectedBet('Small'); setShowBetModal(true); }}
-            className="bg-gradient-to-r from-blue-500 to-indigo-600 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-blue-900/20"
-          >
-            Small
+      {/* Announcement */}
+      <div className="px-4 mb-4">
+        <div className="bg-[#1f2228] rounded-full p-2 flex items-center gap-3 border border-gray-800">
+          <div className="p-1.5 bg-purple-500/20 rounded-full">
+            <Megaphone className="w-4 h-4 text-purple-400" />
+          </div>
+          <div className="flex-1 overflow-hidden">
+            <p className="text-[10px] text-gray-400 whitespace-nowrap animate-marquee">
+              Our customer service will never send any links to members—if you receive a link from someone claiming to be customer service, please do not click it.
+            </p>
+          </div>
+          <button className="bg-gradient-to-r from-purple-600 to-blue-500 text-[10px] px-4 py-1.5 rounded-full font-bold shadow-lg">
+            Detail
           </button>
         </div>
       </div>
 
-      {/* History Tabs */}
-      <div className="mt-10 px-6">
-        <div className="flex gap-6 border-b border-gray-800 mb-6">
+      {/* Game Mode Selection */}
+      <div className="px-4 mb-6">
+        <div className="grid grid-cols-4 gap-2">
+          {gameModes.map((mode) => (
+            <button
+              key={mode.id}
+              onClick={() => navigate(`/game/${mode.id}`)}
+              className={cn(
+                "flex flex-col items-center p-3 rounded-2xl border transition-all",
+                type === mode.id 
+                  ? "bg-gradient-to-b from-purple-600 to-blue-500 border-transparent shadow-lg shadow-purple-900/20" 
+                  : "bg-[#1f2228] border-gray-800 text-gray-500"
+              )}
+            >
+              <Clock className={cn("w-6 h-6 mb-2", type === mode.id ? "text-white" : "text-gray-600")} />
+              <span className="text-[10px] font-bold text-center leading-tight">{mode.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Timer & Results Section */}
+      <div className="px-4 mb-6">
+        <div className="relative aspect-[3.2/1] w-full overflow-hidden rounded-2xl shadow-2xl">
+          {/* Ticket Background Image */}
+          <img 
+            src="/images/backgrounds/ticket_bg.png" 
+            className="absolute inset-0 h-full w-full object-fill"
+            onError={(e) => e.currentTarget.style.display = 'none'}
+            referrerPolicy="no-referrer"
+          />
+          
+          {/* Fallback Gradient (if image fails) */}
+          <div className="absolute inset-0 -z-10 bg-gradient-to-r from-[#ff8a71] via-[#9d6eff] to-[#4facfe] opacity-90" />
+
+          <div className="relative flex h-full items-center justify-between px-6 py-4">
+            {/* Left Side */}
+            <div className="flex h-full flex-col justify-between py-1">
+              <button className="flex w-fit items-center gap-2 rounded-full border border-black/20 bg-black/10 px-4 py-1.5 text-[10px] font-bold text-black/70 backdrop-blur-sm transition-all hover:bg-black/20">
+                <BookOpen className="w-3 h-3" />
+                How to play
+              </button>
+              
+              <div className="space-y-2">
+                <p className="text-[11px] font-black tracking-tight text-black/60">WinGo {type === '30s' ? '30sec' : type}</p>
+                <div className="flex gap-1.5 h-6">
+                  {history.slice(0, 5).reverse().map((game, i) => (
+                    <div key={i} className="relative">
+                      <GameBall number={game.resultNumber || 0} size="sm" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Right Side */}
+            <div className="flex h-full flex-col items-end justify-between py-1 text-right">
+              <div>
+                <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-black/60">Time remaining</p>
+                <div className="flex items-center gap-1">
+                  <div className="flex gap-0.5">
+                    <div className="flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black text-white shadow-inner font-mono leading-none">
+                      {Math.max(0, Math.floor(timeLeft / 60 / 10))}
+                    </div>
+                    <div className="flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black text-white shadow-inner font-mono leading-none">
+                      {Math.max(0, Math.floor(timeLeft / 60) % 10)}
+                    </div>
+                  </div>
+                  <div className="text-xl font-black text-[#1a1d21] leading-none">:</div>
+                  <div className="flex gap-0.5">
+                    <div className="flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black text-white shadow-inner font-mono leading-none">
+                      {Math.max(0, Math.floor((timeLeft % 60) / 10))}
+                    </div>
+                    <div className={cn(
+                      "flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black shadow-inner font-mono leading-none",
+                      timeLeft < 10 ? "text-rose-500" : "text-white"
+                    )}>
+                      {Math.max(0, timeLeft % 10)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              <p className="text-[11px] font-black tracking-widest text-black/80">{periodId}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Betting Buttons Section */}
+      <div className="px-4 mb-6">
+        <div className="bg-[#1f2228] rounded-[32px] p-6 border border-gray-800 shadow-xl">
+          <div className="space-y-6">
+            <div className="grid grid-cols-3 gap-3">
+              <button 
+                onClick={() => { setSelectedBet('Green'); setShowBetModal(true); }}
+                className="bg-[#10b981] hover:bg-emerald-600 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-900/20 transition-all active:scale-95"
+              >
+                Green
+              </button>
+              <button 
+                onClick={() => { setSelectedBet('Violet'); setShowBetModal(true); }}
+                className="bg-[#a855f7] hover:bg-purple-600 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-purple-900/20 transition-all active:scale-95"
+              >
+                Violet
+              </button>
+              <button 
+                onClick={() => { setSelectedBet('Red'); setShowBetModal(true); }}
+                className="bg-[#f43f5e] hover:bg-rose-600 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-rose-900/20 transition-all active:scale-95"
+              >
+                Red
+              </button>
+            </div>
+
+            <div className="bg-[#1a1d21] rounded-2xl p-4 border border-gray-800/50">
+              <div className="grid grid-cols-5 gap-y-4 gap-x-2">
+                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                  <button
+                    key={num}
+                    onClick={() => { setSelectedBet(num.toString()); setShowBetModal(true); }}
+                    className="hover:scale-110 transition-transform flex justify-center"
+                  >
+                    <GameBall number={num} size="md" />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+              <button
+                onClick={handleRandom}
+                className="px-4 py-2 rounded-lg border border-rose-500/50 text-rose-400 text-xs font-bold whitespace-nowrap bg-rose-500/5 hover:bg-rose-500/10 transition-all"
+              >
+                Random
+              </button>
+              <div className="flex gap-2">
+                {[1, 5, 10, 20, 50, 100].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setMultiplier(m)}
+                    className={cn(
+                      "w-12 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center",
+                      multiplier === m
+                        ? "bg-[#10b981] text-white shadow-lg shadow-emerald-900/20" 
+                        : "bg-[#2a2e35] text-gray-400 hover:text-gray-200"
+                    )}
+                  >
+                    X{m}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex h-14 rounded-full overflow-hidden shadow-xl">
+              <button 
+                onClick={() => { setSelectedBet('Big'); setShowBetModal(true); }}
+                className="flex-1 bg-gradient-to-r from-[#ffb347] to-[#ffcc33] font-black text-lg text-white/90 active:scale-95 transition-all"
+              >
+                Big
+              </button>
+              <button 
+                onClick={() => { setSelectedBet('Small'); setShowBetModal(true); }}
+                className="flex-1 bg-gradient-to-r from-[#4facfe] to-[#00f2fe] font-black text-lg text-white/90 active:scale-95 transition-all"
+              >
+                Small
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* History / Chart Tabs */}
+      <div className="px-4">
+        <div className="flex bg-[#1a1d21] p-1 rounded-2xl mb-6 border border-gray-800/50">
           <button 
             onClick={() => setActiveTab('game')}
-            className={`pb-3 border-b-2 font-bold text-sm transition-all ${activeTab === 'game' ? 'border-purple-500 text-purple-500' : 'border-transparent text-gray-500'}`}
+            className={cn(
+              "flex-1 py-3 rounded-xl text-xs font-bold transition-all",
+              activeTab === 'game' ? "bg-gradient-to-r from-[#ff8a71] to-[#ff5858] text-white shadow-lg" : "text-gray-500"
+            )}
           >
-            Game History
+            Game history
+          </button>
+          <button 
+            onClick={() => setActiveTab('chart')}
+            className={cn(
+              "flex-1 py-3 rounded-xl text-xs font-bold transition-all",
+              activeTab === 'chart' ? "bg-[#2a2e35] text-gray-500" : "text-gray-500"
+            )}
+          >
+            Chart
           </button>
           <button 
             onClick={() => setActiveTab('my')}
-            className={`pb-3 border-b-2 font-bold text-sm transition-all ${activeTab === 'my' ? 'border-purple-500 text-purple-500' : 'border-transparent text-gray-500'}`}
+            className={cn(
+              "flex-1 py-3 rounded-xl text-xs font-bold transition-all",
+              activeTab === 'my' ? "bg-[#2a2e35] text-gray-500" : "text-gray-500"
+            )}
           >
-            My History
+            My history
           </button>
         </div>
 
-        {activeTab === 'game' ? (
+        {activeTab === 'game' && (
           <div className="space-y-3">
             <div className="grid grid-cols-4 text-[10px] text-gray-500 font-bold uppercase tracking-wider px-2">
               <span>Period</span>
               <span className="text-center">Number</span>
-              <span className="text-center">Size</span>
+              <span className="text-center">Big Small</span>
               <span className="text-right">Color</span>
             </div>
-            
             {history.slice((gamePage - 1) * ITEMS_PER_PAGE, gamePage * ITEMS_PER_PAGE).map((game) => (
               <div key={game.id} className="bg-[#1f2228] p-3 rounded-xl border border-gray-800 grid grid-cols-4 items-center">
-                <span className="text-xs font-mono text-gray-400">{game.periodId.slice(-4)}</span>
-                <span className={`text-center font-bold text-lg ${NUMBER_COLORS[game.resultNumber || 0].includes('emerald') ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {game.resultNumber}
-                </span>
-                <span className="text-center text-xs text-gray-300">{game.resultSize}</span>
-                <div className="flex justify-end">
-                  <div className={cn("w-3 h-3 rounded-full", NUMBER_COLORS[game.resultNumber || 0])} />
+                <span className="text-xs font-mono text-gray-400">{game.periodId}</span>
+                <div className="flex justify-center">
+                  <span className={cn("text-2xl font-black italic", 
+                    game.resultNumber === 0 ? "text-rose-500" :
+                    game.resultNumber === 5 ? "text-emerald-500" :
+                    [1,3,7,9].includes(game.resultNumber!) ? "text-emerald-500" : "text-rose-500"
+                  )}>
+                    {game.resultNumber}
+                  </span>
+                </div>
+                <div className="flex justify-center">
+                  <span className="text-xs font-bold text-white">{game.resultSize}</span>
+                </div>
+                <div className="flex justify-end gap-1">
+                  {game.resultNumber === 0 ? (
+                    <>
+                      <div className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                      <div className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+                    </>
+                  ) : game.resultNumber === 5 ? (
+                    <>
+                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                      <div className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+                    </>
+                  ) : (
+                    <div className={cn("w-2.5 h-2.5 rounded-full", 
+                      game.resultColor === 'Green' ? 'bg-emerald-500' : 
+                      game.resultColor === 'Red' ? 'bg-rose-500' : 'bg-purple-500'
+                    )} />
+                  )}
                 </div>
               </div>
             ))}
@@ -468,121 +844,196 @@ export default function GamePage() {
               </button>
             </div>
           </div>
-        ) : (
-            <div className="space-y-4">
-              {myBets.slice((myPage - 1) * ITEMS_PER_PAGE, myPage * ITEMS_PER_PAGE).map((bet) => (
-                <div key={bet.id} className="bg-[#1f2228] p-4 rounded-2xl border border-gray-800 flex items-center gap-4">
-                  {/* Selection Badge */}
+        )}
+
+        {activeTab === 'chart' && (
+          <div className="bg-[#1f2228] rounded-3xl border border-gray-800 overflow-hidden relative" ref={chartContainerRef}>
+            <div className="grid grid-cols-[repeat(13,1fr)] bg-gray-800/50 p-3 text-[10px] font-bold text-gray-400 border-b border-gray-800">
+              <div className="col-span-2">Period</div>
+              {[0,1,2,3,4,5,6,7,8,9].map(n => (
+                <div key={n} className="text-center">{n}</div>
+              ))}
+              <div className="text-right"></div>
+            </div>
+            
+            <div className="divide-y divide-gray-800/50 relative">
+              {/* Statistics Rows */}
+              <div className="grid grid-cols-[repeat(13,1fr)] p-3 text-[10px] font-medium">
+                <div className="col-span-2 text-gray-500">Statistic</div>
+                <div className="col-span-11 text-gray-400 text-center">(last 100 Periods)</div>
+              </div>
+              
+              <div className="grid grid-cols-[repeat(13,1fr)] p-3 text-[10px] font-medium">
+                <div className="col-span-2 text-gray-500">Winning</div>
+                {[0,1,2,3,4,5,6,7,8,9].map(n => (
+                  <div key={n} className="text-center text-rose-400 font-bold">{n}</div>
+                ))}
+                <div></div>
+              </div>
+
+              <div className="grid grid-cols-[repeat(13,1fr)] p-3 text-[10px] font-medium">
+                <div className="col-span-2 text-gray-500">Missing</div>
+                {stats.missing.map((m, i) => (
+                  <div key={i} className="text-center text-gray-400">{m}</div>
+                ))}
+                <div></div>
+              </div>
+
+              <div className="grid grid-cols-[repeat(13,1fr)] p-3 text-[10px] font-medium">
+                <div className="col-span-2 text-gray-500">Avg miss</div>
+                {stats.avgMissing.map((m, i) => (
+                  <div key={i} className="text-center text-gray-400">{m}</div>
+                ))}
+                <div></div>
+              </div>
+
+              <div className="grid grid-cols-[repeat(13,1fr)] p-3 text-[10px] font-medium">
+                <div className="col-span-2 text-gray-500">Frequency</div>
+                {stats.frequency.map((f, i) => (
+                  <div key={i} className="text-center text-gray-400">{f}</div>
+                ))}
+                <div></div>
+              </div>
+
+              <div className="grid grid-cols-[repeat(13,1fr)] p-3 text-[10px] font-medium">
+                <div className="col-span-2 text-gray-500">Max cons</div>
+                {stats.maxConsecutive.map((m, i) => (
+                  <div key={i} className="text-center text-gray-400">{m}</div>
+                ))}
+                <div></div>
+              </div>
+
+              {/* Recent Results Rows */}
+              {history.slice(0, 10).map((game) => (
+                <div key={game.id} className="grid grid-cols-[repeat(13,1fr)] p-3 text-[10px] font-mono chart-row items-center">
+                  <div className="col-span-2 text-gray-500">{game.periodId.slice(-4)}</div>
+                  {[0,1,2,3,4,5,6,7,8,9].map(n => (
+                    <div key={n} className="flex justify-center items-center">
+                      {game.resultNumber === n ? (
+                        <GameBall number={n} size="sm" className="winning-ball z-20" />
+                      ) : (
+                        <span className="text-gray-700 border border-gray-800/50 rounded-full w-5 h-5 flex items-center justify-center">{n}</span>
+                      )}
+                    </div>
+                  ))}
+                  <div className="flex justify-end">
+                    <div className={cn(
+                      "w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black text-white",
+                      game.resultSize === 'Big' ? "bg-orange-500" : "bg-blue-500"
+                    )}>
+                      {game.resultSize === 'Big' ? 'B' : 'S'}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'my' && (
+          <div className="space-y-4">
+            {myBets.slice((myPage - 1) * ITEMS_PER_PAGE, myPage * ITEMS_PER_PAGE).map((bet) => (
+              <div key={bet.id} className="bg-[#1f2228] p-4 rounded-2xl border border-gray-800 flex items-center gap-4">
+                {!isNaN(Number(bet.selection)) ? (
+                  <div className={cn(
+                    "w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-black italic uppercase shadow-lg shrink-0",
+                    [1, 3, 7, 9].includes(Number(bet.selection)) ? "bg-emerald-500 text-white" :
+                    [2, 4, 6, 8].includes(Number(bet.selection)) ? "bg-rose-500 text-white" :
+                    Number(bet.selection) === 0 ? "bg-[linear-gradient(135deg,#f43f5e_50%,#a855f7_50%)] text-white" :
+                    Number(bet.selection) === 5 ? "bg-[linear-gradient(135deg,#10b981_50%,#a855f7_50%)] text-white" : "bg-gray-500 text-white"
+                  )}>
+                    {bet.selection}
+                  </div>
+                ) : (
                   <div className={cn(
                     "w-14 h-14 rounded-2xl flex items-center justify-center text-[10px] font-black uppercase shadow-lg shrink-0",
                     bet.selection === 'Big' ? "bg-orange-500" :
                     bet.selection === 'Small' ? "bg-blue-500" :
                     bet.selection === 'Green' ? "bg-emerald-500" :
                     bet.selection === 'Red' ? "bg-rose-500" :
-                    bet.selection === 'Violet' ? "bg-purple-500" :
-                    !isNaN(Number(bet.selection)) ? NUMBER_COLORS[Number(bet.selection)] : "bg-gray-700"
+                    bet.selection === 'Violet' ? "bg-purple-500" : "bg-gray-700"
                   )}>
                     {bet.selection}
                   </div>
-
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-mono font-bold text-sm text-gray-200 truncate">{bet.periodId}</p>
-                    <p className="text-[10px] text-gray-500 mt-1">
-                      {bet.createdAt?.toDate().toISOString().slice(0, 19).replace('T', ' ')}
-                    </p>
-                  </div>
-
-                  {/* Status & Amount */}
-                  <div className="text-right shrink-0">
-                    {bet.status === 'pending' ? (
-                      <div className="flex flex-col items-end gap-1">
-                        <span className="bg-yellow-500/10 text-yellow-500 text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider border border-yellow-500/20">
-                          Wait
-                        </span>
-                        <p className="text-sm font-bold text-gray-400">₹{bet.totalAmount.toFixed(2)}</p>
-                      </div>
-                    ) : bet.status === 'win' ? (
-                      <div className="flex flex-col items-end gap-1">
-                        <span className="bg-emerald-500/10 text-emerald-500 text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider border border-emerald-500/20">
-                          Succeed
-                        </span>
-                        <p className="text-sm font-bold text-emerald-500">+{formatCurrency(bet.winAmount || 0)}</p>
-                        <p className="text-[8px] text-gray-500 italic">Fee: ₹{bet.fee?.toFixed(2)}</p>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-end gap-1">
-                        <span className="bg-rose-500/10 text-rose-500 text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider border border-rose-500/20">
-                          Failed
-                        </span>
-                        <p className="text-sm font-bold text-rose-500">-{formatCurrency(bet.totalAmount)}</p>
-                        <p className="text-[8px] text-gray-500 italic">Fee: ₹{bet.fee?.toFixed(2)}</p>
-                      </div>
-                    )}
-                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="font-mono font-bold text-sm text-gray-200 truncate">{bet.periodId}</p>
+                  <p className="text-[10px] text-gray-500 mt-1">
+                    {bet.createdAt?.toDate().toISOString().slice(0, 19).replace('T', ' ')}
+                  </p>
                 </div>
-              ))}
+                <div className="text-right shrink-0">
+                  {bet.status === 'pending' ? (
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="bg-yellow-500/10 text-yellow-500 text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider border border-yellow-500/20">Wait</span>
+                      <p className="text-sm font-bold text-gray-400">₹{bet.totalAmount.toFixed(2)}</p>
+                    </div>
+                  ) : bet.status === 'win' ? (
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="bg-emerald-500/10 text-emerald-500 text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider border border-emerald-500/20">Succeed</span>
+                      <p className="text-sm font-bold text-emerald-500">+{formatCurrency(bet.winAmount || 0)}</p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="bg-rose-500/10 text-rose-500 text-[10px] px-3 py-1 rounded-full font-bold uppercase tracking-wider border border-rose-500/20">Failed</span>
+                      <p className="text-sm font-bold text-rose-500">-{formatCurrency(bet.totalAmount)}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {/* Pagination */}
+            <div className="flex items-center justify-center gap-6 mt-6 pb-4">
+              <button
+                disabled={myPage === 1}
+                onClick={() => setMyPage(prev => Math.max(1, prev - 1))}
+                className="w-10 h-10 rounded-xl bg-gray-800 text-gray-400 flex items-center justify-center disabled:opacity-20 hover:bg-gray-700 transition-colors border border-gray-700"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
               
-              {/* Pagination */}
-              <div className="flex items-center justify-center gap-6 mt-6 pb-4">
-                <button
-                  disabled={myPage === 1}
-                  onClick={() => setMyPage(prev => Math.max(1, prev - 1))}
-                  className="w-10 h-10 rounded-xl bg-gray-800 text-gray-400 flex items-center justify-center disabled:opacity-20 hover:bg-gray-700 transition-colors border border-gray-700"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                
-                <div className="flex items-center gap-2">
-                  <span className="text-lg font-bold text-purple-500">{myPage}</span>
-                  <span className="text-gray-600">/</span>
-                  <span className="text-sm font-medium text-gray-500">5</span>
-                </div>
-
-                <button
-                  disabled={myPage === 5}
-                  onClick={() => setMyPage(prev => Math.min(5, prev + 1))}
-                  className="w-10 h-10 rounded-xl bg-gray-800 text-gray-400 flex items-center justify-center disabled:opacity-20 hover:bg-gray-700 transition-colors border border-gray-700"
-                >
-                  <ChevronRight className="w-5 h-5" />
-                </button>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-bold text-purple-500">{myPage}</span>
+                <span className="text-gray-600">/</span>
+                <span className="text-sm font-medium text-gray-500">5</span>
               </div>
 
-              {myBets.length === 0 && (
-                <div className="text-center py-20 text-gray-600">
-                  <p className="text-sm italic">No bets found in your history</p>
-                </div>
-              )}
+              <button
+                disabled={myPage === 5 || myBets.length <= myPage * ITEMS_PER_PAGE}
+                onClick={() => setMyPage(prev => Math.min(5, prev + 1))}
+                className="w-10 h-10 rounded-xl bg-gray-800 text-gray-400 flex items-center justify-center disabled:opacity-20 hover:bg-gray-700 transition-colors border border-gray-700"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
             </div>
+          </div>
         )}
       </div>
 
-      {/* Large Countdown Overlay */}
+      {/* Countdown Overlay */}
       <AnimatePresence>
-        {timeLeft > 0 && timeLeft <= 3 && (
+        {timeLeft <= 5 && timeLeft >= 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40"
           >
-            <div className="flex gap-2">
-              {/* Tens digit (always 0 for < 10s) */}
+            <div className="flex gap-4">
               <motion.div
                 key={`tens-${timeLeft}`}
-                initial={{ scale: 0.5, opacity: 0, y: 10 }}
-                animate={{ scale: 1, opacity: 1, y: 0 }}
-                className="w-16 h-24 bg-[#4b4e9b] rounded-xl flex items-center justify-center text-[50px] font-bold text-[#b2b5ff] shadow-xl border border-white/10"
+                initial={{ y: 50, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                className="w-32 h-48 bg-[#4b4e9b] rounded-3xl flex items-center justify-center text-[120px] font-black text-white shadow-2xl"
               >
                 0
               </motion.div>
-              {/* Units digit */}
               <motion.div
                 key={`units-${timeLeft}`}
-                initial={{ scale: 0.5, opacity: 0, y: 10 }}
-                animate={{ scale: 1.1, opacity: 1, y: 0 }}
-                transition={{ type: 'spring', stiffness: 300, damping: 15 }}
-                className="w-16 h-24 bg-[#4b4e9b] rounded-xl flex items-center justify-center text-[50px] font-bold text-[#b2b5ff] shadow-xl border border-white/10"
+                initial={{ y: 50, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                className="w-32 h-48 bg-[#4b4e9b] rounded-3xl flex items-center justify-center text-[120px] font-black text-white shadow-2xl"
               >
                 {timeLeft}
               </motion.div>
@@ -596,111 +1047,97 @@ export default function GamePage() {
         {showResultModal && resultData && (
           <div 
             onClick={() => setShowResultModal(false)}
-            className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm cursor-pointer"
+            className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/60 cursor-pointer"
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside the modal
-              className={cn(
-                "w-full max-w-xs rounded-[40px] overflow-hidden shadow-2xl relative",
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-[320px] aspect-[1/1.4] relative overflow-hidden rounded-[40px] shadow-2xl"
+            >
+              {/* Background Image */}
+              <img 
+                src={resultData.bet.status === 'win' ? "/images/results/win_popup.png" : "/images/results/loss_popup.png"}
+                className="absolute inset-0 w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                }}
+              />
+              
+              {/* Fallback Gradient if image fails */}
+              <div className={cn(
+                "absolute inset-0 -z-10",
                 resultData.bet.status === 'win' 
                   ? "bg-gradient-to-b from-[#ff6b4a] to-[#ff4d4d]" 
-                  : "bg-gradient-to-b from-[#d1e3f8] to-[#b8d1f1]"
-              )}
-            >
-              {/* Top Ribbon/Rocket Header */}
-              <div className="flex flex-col items-center pt-8 pb-4 relative">
-                <button 
-                  onClick={() => setShowResultModal(false)}
-                  className="absolute top-4 right-4 p-1 bg-black/10 hover:bg-black/20 rounded-full transition-colors"
-                >
-                  <XCircle className={cn(
-                    "w-6 h-6",
-                    resultData.bet.status === 'win' ? "text-white/70" : "text-blue-400"
-                  )} />
-                </button>
-                <div className={cn(
-                  "w-20 h-20 rounded-full flex items-center justify-center shadow-lg border-4 mb-4",
-                  resultData.bet.status === 'win' 
-                    ? "bg-gradient-to-br from-yellow-400 to-orange-500 border-orange-300" 
-                    : "bg-gradient-to-br from-blue-100 to-blue-300 border-blue-50"
-                )}>
-                  <Rocket className={cn(
-                    "w-10 h-10",
-                    resultData.bet.status === 'win' ? "text-white" : "text-blue-500"
-                  )} />
-                </div>
-                
-                <h3 className={cn(
-                  "text-2xl font-black uppercase tracking-wider",
-                  resultData.bet.status === 'win' ? "text-white" : "text-blue-600"
-                )}>
-                  {resultData.bet.status === 'win' ? 'Congratulations' : 'Better Luck'}
-                </h3>
-              </div>
+                  : "bg-gradient-to-b from-[#5c7fb1] to-[#43618a]"
+              )} />
 
-              {/* Lottery Results Row */}
-              <div className="flex items-center justify-center gap-2 mb-6">
-                <span className="text-[10px] font-bold opacity-60 text-black/60">Lottery results</span>
-                <div className="flex gap-1.5">
-                  <span className="bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-md font-bold">
-                    {resultData.game.resultColor}
-                  </span>
-                  <span className="bg-emerald-500 text-white text-[10px] w-5 h-5 flex items-center justify-center rounded-full font-bold">
-                    {resultData.game.resultNumber}
-                  </span>
-                  <span className="bg-emerald-500 text-white text-[10px] px-2 py-0.5 rounded-md font-bold">
-                    {resultData.game.resultSize}
-                  </span>
-                </div>
-              </div>
+              {/* Close Button */}
+              <button 
+                onClick={() => setShowResultModal(false)} 
+                className="absolute top-4 right-4 z-50 p-1 bg-black/20 hover:bg-black/40 rounded-full transition-all"
+              >
+                <XCircle className="w-6 h-6 text-white/80" />
+              </button>
 
-              {/* White Ticket Section */}
-              <div className="px-6 pb-8">
-                <div className="bg-white rounded-3xl p-6 shadow-inner relative overflow-hidden flex flex-col items-center text-center">
-                  <div className="absolute top-0 left-0 right-0 h-1 bg-gray-100/50" />
-                  
-                  <p className={cn(
-                    "text-lg font-bold mb-1",
-                    resultData.bet.status === 'win' ? "text-rose-500" : "text-gray-400"
+              <div className="relative h-full flex flex-col items-center justify-between py-10 px-6">
+                <div className="text-center space-y-2 mt-12">
+                  <h3 className={cn(
+                    "text-2xl font-black uppercase tracking-wider",
+                    resultData.bet.status === 'win' ? "text-white" : "text-blue-100"
                   )}>
-                    {resultData.bet.status === 'win' ? 'Bonus' : 'Lose'}
-                  </p>
-                  
-                  {resultData.bet.status === 'win' ? (
-                    <div className="flex flex-col items-center mb-2">
-                      <h2 className="text-3xl font-black text-rose-500">
-                        ₹{resultData.bet.winAmount?.toFixed(2)}
-                      </h2>
-                      <p className="text-[10px] text-gray-400 mt-1">
-                        (4% Fee deducted: ₹{resultData.bet.fee?.toFixed(2)})
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center mb-2">
-                      <h2 className="text-3xl font-black text-gray-400">
-                        -₹{resultData.bet.netAmount.toFixed(2)}
-                      </h2>
-                      <p className="text-[10px] text-gray-400 mt-1">
-                        (4% Fee deducted: ₹{resultData.bet.fee?.toFixed(2)})
-                      </p>
-                    </div>
-                  )}
+                    {resultData.bet.status === 'win' ? 'Congratulations' : 'Sorry'}
+                  </h3>
+                </div>
 
-                  <div className="space-y-0.5 mt-2">
-                    <p className="text-[10px] text-gray-400 font-medium">Period: WINGO {type === '30s' ? '30 sec' : type}</p>
-                    <p className="text-[10px] text-gray-400 font-mono">{resultData.bet.periodId}</p>
+                <div className="flex flex-col items-center space-y-4 w-full">
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-[10px] font-bold text-white/60">Lottery results</span>
+                    <div className="flex gap-1.5 items-center">
+                      <span className={cn(
+                        "text-white text-[10px] px-2 py-0.5 rounded-md font-bold",
+                        resultData.game.resultColor === 'Green' ? 'bg-emerald-500' : 
+                        resultData.game.resultColor === 'Red' ? 'bg-rose-500' : 'bg-purple-500'
+                      )}>
+                        {resultData.game.resultColor}
+                      </span>
+                      <GameBall number={resultData.game.resultNumber || 0} size="sm" />
+                      <span className={cn(
+                        "text-white text-[10px] px-2 py-0.5 rounded-md font-bold",
+                        resultData.game.resultSize === 'Big' ? 'bg-orange-500' : 'bg-blue-500'
+                      )}>
+                        {resultData.game.resultSize}
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Auto Close Footer */}
-                  <div className="mt-6 flex items-center gap-2 text-[10px] text-gray-400 font-bold">
-                    <div className="w-4 h-4 rounded-full bg-emerald-500 flex items-center justify-center">
-                      <Check className="w-2.5 h-2.5 text-white" />
+                  <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-4 w-full flex flex-col items-center shadow-lg">
+                    <p className={cn(
+                      "text-sm font-bold mb-1",
+                      resultData.bet.status === 'win' ? "text-[#ff4d4d]" : "text-gray-500"
+                    )}>
+                      {resultData.bet.status === 'win' ? 'Bonus' : 'Lose'}
+                    </p>
+                    <h2 className={cn(
+                      "text-3xl font-black",
+                      resultData.bet.status === 'win' ? "text-[#ff4d4d]" : "text-[#43618a]"
+                    )}>
+                      {resultData.bet.status === 'win' ? `₹${resultData.bet.winAmount?.toFixed(2)}` : `₹${resultData.bet.totalAmount.toFixed(2)}`}
+                    </h2>
+                    <div className="mt-2 text-center">
+                      <p className="text-[8px] text-gray-500 font-medium">Period: WinGo {type === '30s' ? '30 sec' : type}</p>
+                      <p className="text-[8px] text-gray-400 font-mono">{resultData.bet.periodId}</p>
                     </div>
-                    2 seconds auto close
                   </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-[10px] text-white/80 font-bold">
+                  <div className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center">
+                    <Check className="w-2.5 h-2.5 text-white" />
+                  </div>
+                  3 seconds auto close
                 </div>
               </div>
             </motion.div>
@@ -711,74 +1148,131 @@ export default function GamePage() {
       {/* Bet Modal */}
       <AnimatePresence>
         {showBetModal && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm">
+          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60">
             <motion.div 
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
-              className="w-full max-w-md bg-[#1f2228] rounded-t-[40px] p-8 space-y-8 border-t border-gray-800"
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="w-full max-w-[430px] bg-[#1f2228] rounded-t-[32px] overflow-hidden border-t border-gray-800"
             >
-              <div className="flex items-center justify-between">
-                <h3 className="text-xl font-bold flex items-center gap-2">
-                  Select {selectedBet}
-                </h3>
-                <button onClick={() => setShowBetModal(false)} className="p-2 bg-gray-800 rounded-full">
-                  <XCircle className="w-6 h-6 text-gray-500" />
-                </button>
+              {/* Modal Header */}
+              <div className={cn(
+                "p-6 text-center space-y-3 relative transition-colors duration-300",
+                theme.header
+              )}>
+                <h3 className="text-white font-bold text-lg">WinGo {type === '30s' ? '30sec' : type === '1m' ? '1 Min' : type === '3m' ? '3 Min' : '5 Min'}</h3>
+                <div className="bg-white rounded-lg py-2 px-4 inline-block shadow-md">
+                  <span className={cn(
+                    "font-bold text-sm",
+                    theme.text
+                  )}>Select {selectedBet}</span>
+                </div>
               </div>
 
-              <div className="space-y-4">
-                <p className="text-sm text-gray-400">Select Amount</p>
-                <div className="grid grid-cols-4 gap-2">
-                  {[1, 10, 100, 1000].map((amt) => (
-                    <button
-                      key={amt}
-                      onClick={() => setBetAmount(amt)}
-                      className={`py-2 rounded-xl font-bold transition-all ${betAmount === amt ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400'}`}
+              <div className="p-6 space-y-6">
+                {/* Balance Selection */}
+                <div className="flex items-center justify-between">
+                  <span className="text-white font-medium text-sm">Balance</span>
+                  <div className="flex gap-2">
+                    {[1, 10, 100, 1000].map((amt) => (
+                      <button 
+                        key={amt} 
+                        onClick={() => setBetAmount(amt)} 
+                        className={cn(
+                          "px-3 py-1.5 rounded-md font-bold text-xs transition-all", 
+                          betAmount === amt ? theme.solid + ' text-white' : 'bg-[#2a2e35] text-gray-400'
+                        )}
+                      >
+                        {amt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Quantity Selection */}
+                <div className="flex items-center justify-between">
+                  <span className="text-white font-medium text-sm">Quantity</span>
+                  <div className="flex items-center bg-[#2a2e35] rounded-md overflow-hidden">
+                    <button 
+                      onClick={() => setMultiplier(Math.max(1, multiplier - 1))} 
+                      className={cn(
+                        "w-8 h-8 flex items-center justify-center text-white text-lg font-bold transition-colors",
+                        theme.solid
+                      )}
                     >
-                      {amt}
+                      -
                     </button>
-                  ))}
+                    <input 
+                      type="number" 
+                      value={multiplier || ''} 
+                      onChange={(e) => setMultiplier(e.target.value === '' ? 0 : parseInt(e.target.value) || 0)} 
+                      className="w-12 bg-transparent border-none text-center font-bold text-white text-sm outline-none" 
+                    />
+                    <button 
+                      onClick={() => setMultiplier(multiplier + 1)} 
+                      className={cn(
+                        "w-8 h-8 flex items-center justify-center text-white text-lg font-bold transition-colors",
+                        theme.solid
+                      )}
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              <div className="space-y-4">
-                <p className="text-sm text-gray-400">Multiplier</p>
-                <div className="flex items-center gap-4">
-                  <button onClick={() => setMultiplier(Math.max(1, multiplier - 1))} className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-xl font-bold">-</button>
-                  <input 
-                    type="number" 
-                    value={multiplier} 
-                    onChange={(e) => setMultiplier(parseInt(e.target.value) || 1)}
-                    className="flex-1 bg-gray-800 border-none rounded-xl py-2 text-center font-bold outline-none"
-                  />
-                  <button onClick={() => setMultiplier(multiplier + 1)} className="w-10 h-10 bg-gray-800 rounded-full flex items-center justify-center text-xl font-bold">+</button>
-                </div>
-                <div className="grid grid-cols-5 gap-2">
-                  {[1, 5, 10, 20, 50].map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setMultiplier(m)}
-                      className={`py-1 rounded-lg text-xs font-bold ${multiplier === m ? 'bg-purple-600/20 text-purple-400 border border-purple-500/50' : 'bg-gray-800 text-gray-500'}`}
+                {/* Multiplier Quick Select */}
+                <div className="flex justify-end gap-2">
+                  {[1, 5, 10, 20, 50, 100].map((m) => (
+                    <button 
+                      key={m} 
+                      onClick={() => setMultiplier(m)} 
+                      className={cn(
+                        "px-2.5 py-1.5 rounded-md font-bold text-[10px] transition-all", 
+                        multiplier === m ? theme.solid + ' text-white' : 'bg-[#2a2e35] text-gray-400'
+                      )}
                     >
                       X{m}
                     </button>
                   ))}
                 </div>
+
+                {/* Agreement */}
+                <div className="flex items-center gap-2 pt-2">
+                  <button 
+                    onClick={() => setAgreed(!agreed)}
+                    className={cn(
+                      "w-4 h-4 rounded-full flex items-center justify-center transition-all",
+                      agreed ? theme.solid : "border border-gray-600"
+                    )}
+                  >
+                    {agreed && <Check className="w-2.5 h-2.5 text-white" />}
+                  </button>
+                  <p className="text-[10px] text-gray-400">
+                    I agree <span className="text-rose-400">《Pre-sale rules》</span>
+                  </p>
+                </div>
               </div>
 
-              <div className="bg-purple-500/10 p-4 rounded-2xl flex items-center justify-between border border-purple-500/20">
-                <span className="text-sm text-gray-400">Total Amount</span>
-                <span className="text-xl font-bold text-purple-400">{formatCurrency(betAmount * multiplier)}</span>
+              {/* Modal Footer */}
+              <div className="flex h-14">
+                <button 
+                  onClick={() => setShowBetModal(false)} 
+                  className="flex-1 bg-[#2a2e35] text-white font-bold text-sm"
+                >
+                  Cancel
+                </button>
+                <button 
+                  disabled={isBetting || timeLeft < 5 || !agreed} 
+                  onClick={handlePlaceBet} 
+                  className={cn(
+                    "flex-[2] text-white font-bold text-sm disabled:opacity-50 transition-colors",
+                    theme.solid
+                  )}
+                >
+                  {isBetting ? 'Processing...' : `Total amount ₹${(betAmount * multiplier).toFixed(2)}`}
+                </button>
               </div>
-
-              <button
-                disabled={isBetting || timeLeft < 5}
-                onClick={handlePlaceBet}
-                className="w-full bg-gradient-to-r from-purple-600 to-blue-500 py-4 rounded-2xl font-bold text-lg shadow-lg shadow-purple-900/20 disabled:opacity-50"
-              >
-                {isBetting ? 'Processing...' : timeLeft < 5 ? 'Time Up' : 'Confirm Bet'}
-              </button>
             </motion.div>
           </div>
         )}

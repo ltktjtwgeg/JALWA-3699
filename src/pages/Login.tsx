@@ -1,42 +1,80 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth, db } from '../firebase';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
 import { toast } from 'sonner';
-import { Phone, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react';
+import { Mail, Phone, Lock, Eye, EyeOff, ArrowRight, ChevronLeft, Globe, Headphones, UserCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export default function Login() {
+  const [loginMethod, setLoginMethod] = useState<'phone' | 'email'>('phone');
+  const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [demoUsers, setDemoUsers] = useState<any[]>([]);
+  const [showDemoList, setShowDemoList] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetchDemos = async () => {
+      try {
+        const q = query(collection(db, 'users'), where('isDemo', '==', true));
+        const snap = await getDocs(q);
+        setDemoUsers(snap.docs.map(d => d.data()));
+      } catch (e) {
+        console.error('Error fetching demo users:', e);
+      }
+    };
+    fetchDemos();
+  }, []);
+
+  const handleDemoLogin = async (demoUser: any) => {
+    setLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, demoUser.email, 'password123');
+      toast.success(`Logged in as ${demoUser.username}`);
+      navigate('/');
+    } catch (error: any) {
+      toast.error('Demo login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!phone || !password) return toast.error('Please fill all fields');
+    const identifier = loginMethod === 'email' ? email : phone;
+    if (!identifier || !password) return toast.error('Please fill all fields');
+    if (loginMethod === 'phone' && identifier.length !== 10) return toast.error('Phone number must be 10 digits');
     
     setLoading(true);
     try {
-      // Treat phone as email for simplicity in this demo
-      const email = `${phone}@colorprediction.com`;
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      const authEmail = loginMethod === 'email' ? email : `${phone}@jalwa369.com`;
+      console.log('Attempting login with:', authEmail);
+      const userCredential = await signInWithEmailAndPassword(auth, authEmail, password);
       
-      // Update last login time
-      await updateDoc(doc(db, 'users', userCredential.user.uid), {
-        lastLoginAt: serverTimestamp()
-      });
+      // Update last login time - handle failure gracefully
+      try {
+        await updateDoc(doc(db, 'users', userCredential.user.uid), {
+          lastLoginAt: serverTimestamp()
+        });
+      } catch (e) {
+        console.warn('Failed to update last login time:', e);
+      }
 
       toast.success('Login successful!');
       navigate('/');
     } catch (error: any) {
       console.error('Login error:', error);
-      if (error.code === 'auth/invalid-credential') {
-        toast.error('Invalid phone number or password.');
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/wrong-password') {
+        toast.error('Invalid credentials. Please check your details.');
       } else if (error.code === 'auth/user-not-found') {
-        toast.error('No account found with this phone number.');
+        toast.error('No account found. Please register first.');
+      } else if (error.code === 'auth/too-many-requests') {
+        toast.error('Too many failed attempts. Please try again later.');
       } else {
         toast.error(error.message || 'Login failed');
       }
@@ -46,82 +84,196 @@ export default function Login() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen p-6 bg-[#1a1d21]">
-      <div className="flex flex-col items-center mt-12 mb-10">
-        <div className="w-20 h-20 bg-gradient-to-br from-purple-600 to-blue-500 rounded-2xl flex items-center justify-center shadow-lg mb-4">
-          <span className="text-3xl font-bold text-white">369</span>
+    <div className="flex flex-col min-h-screen bg-[#1a1d21]">
+      {/* Header */}
+      <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 p-4 pb-12">
+        <div className="flex items-center justify-between mb-6">
+          <button onClick={() => navigate(-1)} className="p-2 text-white">
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+          <div className="flex items-center gap-2">
+            <div className="bg-white/20 p-1 rounded-lg backdrop-blur-md">
+              <img 
+                src="/images/logo/logo_new.png" 
+                alt="Logo" 
+                className="h-6 object-contain" 
+                referrerPolicy="no-referrer"
+              />
+            </div>
+            <span className="text-white font-black italic text-xl tracking-tighter">JALWA 369</span>
+          </div>
         </div>
-        <h1 className="text-2xl font-bold text-white">JALWA 369</h1>
-        <p className="text-gray-400 text-sm">Welcome back to Color Prediction</p>
+        
+        <div className="px-2">
+          <h1 className="text-xl font-bold text-white mb-1">Log in</h1>
+          <p className="text-white/70 text-[10px]">Please log in with your phone number or email</p>
+          <p className="text-white/70 text-[10px]">If you forget your password, please contact customer service</p>
+        </div>
       </div>
 
-      <motion.form 
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        onSubmit={handleLogin} 
-        className="space-y-6"
-      >
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-gray-300 ml-1">Phone Number</label>
-          <div className="relative">
-            <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-            <input
-              type="tel"
-              placeholder="Enter phone number"
-              className="w-full bg-[#2a2e35] border-none rounded-xl py-4 pl-12 pr-4 text-white placeholder:text-gray-600 focus:ring-2 focus:ring-purple-500 outline-none transition-all"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-gray-300 ml-1">Password</label>
-          <div className="relative">
-            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
-            <input
-              type={showPassword ? 'text' : 'password'}
-              placeholder="Enter password"
-              className="w-full bg-[#2a2e35] border-none rounded-xl py-4 pl-12 pr-12 text-white placeholder:text-gray-600 focus:ring-2 focus:ring-purple-500 outline-none transition-all"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
-            >
-              {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-            </button>
-          </div>
-        </div>
-
-        <div className="flex justify-end">
-          <button type="button" className="text-sm text-purple-400 hover:text-purple-300">
-            Forgot Password?
+      {/* Main Content */}
+      <div className="flex-1 bg-[#1a1d21] -mt-6 rounded-t-[32px] p-6 shadow-2xl">
+        {/* Tabs */}
+        <div className="flex bg-[#2a2e35] rounded-2xl p-1 mb-8 border border-gray-800">
+          <button 
+            onClick={() => setLoginMethod('phone')}
+            className={`flex-1 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all ${loginMethod === 'phone' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500'}`}
+          >
+            <Phone className="w-4 h-4" />
+            phone number
+          </button>
+          <button 
+            onClick={() => setLoginMethod('email')}
+            className={`flex-1 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all ${loginMethod === 'email' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500'}`}
+          >
+            <Mail className="w-4 h-4" />
+            Email Login
           </button>
         </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-gradient-to-r from-purple-600 to-blue-500 hover:from-purple-500 hover:to-blue-400 text-white font-bold py-4 rounded-xl shadow-lg shadow-purple-900/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+        <motion.form 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          onSubmit={handleLogin} 
+          className="space-y-6"
         >
-          {loading ? 'Logging in...' : (
-            <>
-              Log In <ArrowRight className="w-5 h-5" />
-            </>
+          {loginMethod === 'phone' ? (
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-400 flex items-center gap-2 ml-1">
+                <Phone className="w-3 h-3 text-purple-500" />
+                Phone number
+              </label>
+              <div className="flex gap-2">
+                <div className="bg-[#2a2e35] rounded-xl px-4 py-4 flex items-center gap-2 border border-gray-800 text-white font-bold text-sm">
+                  +91 <span className="text-gray-600">|</span>
+                </div>
+                <input
+                  type="tel"
+                  maxLength={10}
+                  placeholder="Please enter the phone number"
+                  className="flex-1 bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-purple-500 outline-none transition-all text-sm"
+                  value={phone}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, '');
+                    if (val.length <= 10) {
+                      setPhone(val);
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-gray-400 flex items-center gap-2 ml-1">
+                <Mail className="w-3 h-3 text-purple-500" />
+                Mail
+              </label>
+              <input
+                type="email"
+                placeholder="please input your email"
+                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-purple-500 outline-none transition-all text-sm"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
           )}
-        </button>
-      </motion.form>
 
-      <div className="mt-auto pt-10 text-center">
-        <p className="text-gray-400">
-          Don't have an account?{' '}
-          <Link to="/register" className="text-purple-400 font-bold hover:text-purple-300">
-            Register Now
-          </Link>
-        </p>
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-gray-400 flex items-center gap-2 ml-1">
+              <Lock className="w-3 h-3 text-purple-500" />
+              Password
+            </label>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Password"
+                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-purple-500 outline-none transition-all text-sm"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 px-1">
+            <input type="checkbox" id="remember" className="accent-purple-600 w-4 h-4" />
+            <label htmlFor="remember" className="text-[10px] text-gray-400">
+              Remember password
+            </label>
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-gradient-to-r from-purple-600 to-blue-500 hover:from-purple-500 hover:to-blue-400 text-white font-bold py-4 rounded-full shadow-lg shadow-purple-900/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50 text-base"
+          >
+            {loading ? 'Logging in...' : 'Log in'}
+          </button>
+          
+          <button
+            type="button"
+            onClick={() => navigate('/register')}
+            className="w-full py-4 rounded-full border border-purple-500/30 text-purple-400 font-bold hover:bg-purple-500/10 transition-all flex items-center justify-center gap-2 text-sm"
+          >
+            Register
+          </button>
+
+          <div className="flex justify-between pt-4">
+            <button type="button" className="flex flex-col items-center gap-1 group">
+              <div className="w-10 h-10 bg-[#2a2e35] rounded-full flex items-center justify-center group-hover:bg-purple-500/20 transition-all border border-gray-800">
+                <Lock className="w-5 h-5 text-purple-400" />
+              </div>
+              <span className="text-[10px] text-gray-500">Forgot password</span>
+            </button>
+            {demoUsers.length > 0 && (
+              <button 
+                type="button" 
+                onClick={() => setShowDemoList(!showDemoList)}
+                className="flex flex-col items-center gap-1 group"
+              >
+                <div className="w-10 h-10 bg-purple-600/20 rounded-full flex items-center justify-center group-hover:bg-purple-500/40 transition-all border border-purple-500/30">
+                  <UserCircle className="w-5 h-5 text-purple-400" />
+                </div>
+                <span className="text-[10px] text-purple-400 font-bold">Demo Login</span>
+              </button>
+            )}
+            <button type="button" className="flex flex-col items-center gap-1 group">
+              <div className="w-10 h-10 bg-[#2a2e35] rounded-full flex items-center justify-center group-hover:bg-purple-500/20 transition-all border border-gray-800">
+                <Headphones className="w-5 h-5 text-purple-400" />
+              </div>
+              <span className="text-[10px] text-gray-500">Customer Service</span>
+            </button>
+          </div>
+
+          {showDemoList && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="bg-[#2a2e35] rounded-2xl p-4 border border-purple-500/20 space-y-3"
+            >
+              <p className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Select Demo Account</p>
+              <div className="grid grid-cols-1 gap-2">
+                {demoUsers.map((u) => (
+                  <button
+                    key={u.uid}
+                    type="button"
+                    onClick={() => handleDemoLogin(u)}
+                    className="flex items-center justify-between p-3 bg-black/20 rounded-xl hover:bg-black/40 transition-all border border-white/5"
+                  >
+                    <span className="text-xs font-bold text-gray-300">{u.username}</span>
+                    <ArrowRight className="w-3 h-3 text-purple-500" />
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+        </motion.form>
       </div>
     </div>
   );

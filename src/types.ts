@@ -18,15 +18,22 @@ export interface PaymentMethod {
 
 export interface User {
   uid: string;
-  phoneNumber: string;
+  email?: string;
+  phoneNumber?: string;
   username?: string;
+  nickname?: string;
+  avatarUrl?: string;
+  numericId?: number;
   balance: number;
+  totalDeposits?: number;
+  totalBets?: number;
   vipLevel: number;
   inviteCode: string;
   invitedBy?: string;
   createdAt: Timestamp;
   lastLoginAt?: Timestamp;
   role: 'user' | 'admin';
+  isDemo?: boolean;
   paymentMethods?: PaymentMethod[];
 }
 

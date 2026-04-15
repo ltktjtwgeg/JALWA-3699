@@ -107,17 +107,29 @@ export default function History() {
             {bets.map((bet) => (
               <div key={bet.id} className="bg-[#1f2228] p-4 rounded-2xl border border-gray-800 flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className={cn(
-                    "p-2 rounded-xl",
-                    bet.status === 'win' ? "bg-emerald-500/10" : bet.status === 'lost' ? "bg-rose-500/10" : "bg-yellow-500/10"
-                  )}>
-                    <Gamepad2 className={cn(
-                      "w-5 h-5",
-                      bet.status === 'win' ? "text-emerald-500" : bet.status === 'lost' ? "text-rose-500" : "text-yellow-500"
-                    )} />
-                  </div>
+                  {!isNaN(Number(bet.selection)) ? (
+                    <div className={cn(
+                      "w-10 h-10 rounded-full flex items-center justify-center text-sm font-black italic shadow-lg",
+                      [1, 3, 7, 9].includes(Number(bet.selection)) ? "bg-emerald-500 text-white" :
+                      [2, 4, 6, 8].includes(Number(bet.selection)) ? "bg-rose-500 text-white" :
+                      Number(bet.selection) === 0 ? "bg-[linear-gradient(135deg,#f43f5e_50%,#a855f7_50%)] text-white" :
+                      Number(bet.selection) === 5 ? "bg-[linear-gradient(135deg,#10b981_50%,#a855f7_50%)] text-white" : "bg-gray-500 text-white"
+                    )}>
+                      {bet.selection}
+                    </div>
+                  ) : (
+                    <div className={cn(
+                      "p-2 rounded-xl",
+                      bet.status === 'win' ? "bg-emerald-500/10" : bet.status === 'lost' ? "bg-rose-500/10" : "bg-yellow-500/10"
+                    )}>
+                      <Gamepad2 className={cn(
+                        "w-5 h-5",
+                        bet.status === 'win' ? "text-emerald-500" : bet.status === 'lost' ? "text-rose-500" : "text-yellow-500"
+                      )} />
+                    </div>
+                  )}
                   <div>
-                    <p className="font-bold text-sm">WinGo {bet.gameType} - {bet.selection}</p>
+                    <p className="font-bold text-sm">WinGo {bet.gameType} {isNaN(Number(bet.selection)) && `- ${bet.selection}`}</p>
                     <p className="text-[10px] text-gray-500">{bet.createdAt?.toDate().toLocaleString()}</p>
                     <p className="text-[10px] text-gray-600 font-mono">Period: {bet.periodId}</p>
                   </div>
