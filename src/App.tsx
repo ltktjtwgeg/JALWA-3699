@@ -11,6 +11,7 @@ import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import { User as AppUser, GameType } from './types';
+import { syncUser } from './services/apiService';
 import './index.css';
 
 // Pages
@@ -21,6 +22,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Profile from './pages/Profile';
 import Wallet from './pages/Wallet';
+import Deposit from './pages/Deposit';
 import Withdraw from './pages/Withdraw';
 import AddBankCard from './pages/AddBankCard';
 import AddUPI from './pages/AddUPI';
@@ -39,6 +41,7 @@ import Announcements from './pages/Announcements';
 import Feedback from './pages/Feedback';
 import CustomerService from './pages/CustomerService';
 import GameStatistics from './pages/GameStatistics';
+import VIP from './pages/VIP';
 
 const AuthContext = createContext<{
   user: AppUser | null;
@@ -62,6 +65,9 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, async (fUser) => {
       setFirebaseUser(fUser);
       if (fUser) {
+        // Sync with MySQL if enabled
+        syncUser(fUser.uid, fUser.displayName || 'User', fUser.email || '');
+        
         // Fetch app user data
         const userDoc = await getDoc(doc(db, 'users', fUser.uid));
         if (userDoc.exists()) {
@@ -138,8 +144,8 @@ function GameManager() {
       }
     };
 
-    const interval = setInterval(runManager, 1000);
-    return () => clearInterval(interval);
+    // const interval = setInterval(runManager, 1000);
+    // return () => clearInterval(interval);
   }, [firebaseUser]);
 
   return null;
@@ -172,6 +178,7 @@ export default function App() {
             <Route path="/game/:type" element={<PrivateRoute><GamePage /></PrivateRoute>} />
             <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
             <Route path="/wallet" element={<PrivateRoute><Wallet /></PrivateRoute>} />
+            <Route path="/deposit" element={<PrivateRoute><Deposit /></PrivateRoute>} />
             <Route path="/withdraw" element={<PrivateRoute><Withdraw /></PrivateRoute>} />
             <Route path="/withdraw/add-bank" element={<PrivateRoute><AddBankCard /></PrivateRoute>} />
             <Route path="/withdraw/add-upi" element={<PrivateRoute><AddUPI /></PrivateRoute>} />
@@ -190,6 +197,7 @@ export default function App() {
             <Route path="/feedback" element={<PrivateRoute><Feedback /></PrivateRoute>} />
             <Route path="/customer-service" element={<PrivateRoute><CustomerService /></PrivateRoute>} />
             <Route path="/game-statistics" element={<PrivateRoute><GameStatistics /></PrivateRoute>} />
+            <Route path="/vip" element={<PrivateRoute><VIP /></PrivateRoute>} />
           </Routes>
         </BrowserRouter>
         <Toaster position="top-center" richColors />

@@ -37,9 +37,9 @@ export default function AddUSDT() {
         {/* Security Warning */}
         <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 flex gap-3">
           <div className="w-6 h-6 rounded-full border border-rose-500 flex items-center justify-center shrink-0">
-            <span className="text-rose-500 font-bold">!</span>
+            <span className="text-rose-500 font-bold text-sm">!</span>
           </div>
-          <p className="text-xs text-rose-400 font-medium">
+          <p className="text-xs text-rose-400 font-medium leading-relaxed">
             To ensure the safety of your funds, please link your wallet
           </p>
         </div>
@@ -49,13 +49,13 @@ export default function AddUSDT() {
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-gray-400">
               <Globe className="w-4 h-4 text-indigo-500" />
-              <span className="text-xs font-bold uppercase tracking-tighter">Select main network</span>
+              <span className="text-[10px] font-bold uppercase tracking-tighter">Select main network</span>
             </div>
             <div className="relative">
               <select
                 value={formData.network}
                 onChange={(e) => setFormData({ ...formData, network: e.target.value })}
-                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm appearance-none focus:outline-none focus:border-indigo-500"
+                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white appearance-none focus:outline-none focus:border-indigo-500"
               >
                 <option value="TRC">TRC</option>
                 <option value="ERC">ERC</option>
@@ -70,15 +70,15 @@ export default function AddUSDT() {
           {/* USDT Address */}
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-gray-400">
-              <div className="w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center">
-                <span className="text-[10px] font-black text-white">T</span>
+              <div className="w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center overflow-hidden">
+                <img src="/images/wallet/usdt.png" className="w-4 h-4 object-contain" />
               </div>
-              <span className="text-xs font-bold uppercase tracking-tighter">USDT Address</span>
+              <span className="text-[10px] font-bold uppercase tracking-tighter">USDT Address</span>
             </div>
             <input
               type="text"
               placeholder="Please enter the USDT address"
-              className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500"
+              className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500"
               value={formData.address}
               onChange={(e) => setFormData({ ...formData, address: e.target.value })}
             />
@@ -88,12 +88,12 @@ export default function AddUSDT() {
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-gray-400">
               <Tag className="w-4 h-4 text-indigo-500" />
-              <span className="text-xs font-bold uppercase tracking-tighter">Address Alias</span>
+              <span className="text-[10px] font-bold uppercase tracking-tighter">Address Alias</span>
             </div>
             <input
               type="text"
               placeholder="Please enter a remark of the withdrawal address"
-              className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500"
+              className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500"
               value={formData.alias}
               onChange={(e) => setFormData({ ...formData, alias: e.target.value })}
             />
@@ -102,7 +102,7 @@ export default function AddUSDT() {
           {/* Save Button */}
           <button
             type="submit"
-            className="w-full bg-gray-300 text-gray-800 font-black py-4 rounded-full shadow-xl hover:bg-white transition-all uppercase tracking-widest mt-12"
+            className="w-full bg-gradient-to-r from-gray-200 to-gray-400 text-gray-900 font-black py-4 rounded-full shadow-xl hover:from-white hover:to-gray-300 transition-all uppercase tracking-widest mt-12"
           >
             Save
           </button>

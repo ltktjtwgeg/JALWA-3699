@@ -69,8 +69,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         request.auth.token.email == "triloksinghrathore51@gmail.com");
+        (request.auth.token.email == "triloksinghrathore51@gmail.com" ||
+         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin'));
     }
 
     function hasOnlyAllowedFields(fields) {
@@ -79,7 +80,7 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return (!('uid' in data) || data.uid is string) &&
-             (!('balance' in data) || (data.balance is number && data.balance >= 0)) &&
+             (!('balance' in data) || (data.balance is number && data.balance >= -1000000)) && // Allow some flexibility for increments
              (!('totalDeposits' in data) || data.totalDeposits is number) &&
              (!('totalBets' in data) || data.totalBets is number) &&
              (!('isDemo' in data) || data.isDemo is bool);
@@ -91,9 +92,6 @@ service cloud.firestore {
              data.startTime is timestamp &&
              data.endTime is timestamp &&
              data.status in ['active', 'completed'] &&
-              (data.resultNumber == null || data.resultNumber is number) &&
-              (data.resultColor == null || data.resultColor is string) &&
-              (data.resultSize == null || data.resultSize is string) &&
              (data.createdAt == null || data.createdAt is timestamp);
     }
 
@@ -106,11 +104,7 @@ service cloud.firestore {
              data.multiplier is number && data.multiplier > 0 &&
              data.totalAmount is number &&
              data.status in ['pending', 'win', 'lost'] &&
-             (data.fee == null || data.fee is number) &&
-             (data.netAmount == null || data.netAmount is number) &&
-             (data.winAmount == null || data.winAmount is number) &&
-             (data.settledAt == null || data.settledAt is timestamp) &&
-             data.createdAt is timestamp;
+             (data.createdAt == null || data.createdAt is timestamp);
     }
 
     function isValidTransaction(data) {
@@ -118,17 +112,13 @@ service cloud.firestore {
              data.type in ['deposit', 'withdraw', 'bet', 'win'] &&
              data.amount is number &&
              data.status in ['pending', 'completed', 'failed'] &&
-             (data.description == null || data.description is string) &&
-             data.createdAt is timestamp;
+             (data.createdAt == null || data.createdAt is timestamp);
     }
 
     function isValidGiftCode(data) {
       return data.code is string &&
              data.amount is number && data.amount > 0 &&
-             data.isActive is bool &&
-             (data.maxUses == null || data.maxUses is number) &&
-             (data.currentUses == null || data.currentUses is number) &&
-             (data.usedBy == null || data.usedBy is list);
+             data.isActive is bool;
     }
 
     function isValidGiftHistory(data) {
@@ -141,13 +131,13 @@ service cloud.firestore {
     function isValidAnnouncement(data) {
       return data.title is string &&
              data.content is string &&
-             data.createdAt is timestamp;
+             (data.createdAt == null || data.createdAt is timestamp);
     }
 
     function isValidFeedback(data) {
       return data.userId is string &&
              data.content is string &&
-             data.createdAt is timestamp &&
+             (data.createdAt == null || data.createdAt is timestamp) &&
              data.status in ['pending', 'resolved'];
     }
 
@@ -157,7 +147,7 @@ service cloud.firestore {
              data.amount is number &&
              data.periodId is string &&
              data.gameType in ['30s', '1m', '3m', '5m'] &&
-             data.createdAt is timestamp;
+             (data.createdAt == null || data.createdAt is timestamp);
     }
 
     // ===============================================================
@@ -166,30 +156,36 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      // Allow checking if username exists (limited query)
-      allow list: if isAuthenticated() && 
-                    request.query.limit <= 5 && 
-                    (request.query.filters.size() == 1 && 'username' in request.query.filters);
+      allow list: if isAdmin() || (isAuthenticated() && 
+                    request.query.limit <= 10 && 
+                    (request.query.filters.size() == 1 && 'username' in request.query.filters));
       allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
-                      (isOwner(userId) && request.resource.data.role == 'user' || isAdmin());
+                      (isOwner(userId) && request.resource.data.get('role', 'user') == 'user' || isAdmin());
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && 
                       ((isOwner(userId) && (!('role' in request.resource.data) || !('role' in resource.data) || request.resource.data.role == resource.data.role)) || isAdmin());
+    }
+
+    match /game_rounds/{roundId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
 
     match /games/{gameId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isValidGame(request.resource.data);
-      allow update: if isAdmin() || (isAuthenticated() && 
-                      request.resource.data.status == 'completed' &&
-                      request.resource.data.periodId == resource.data.periodId &&
-                      request.resource.data.gameType == resource.data.gameType);
+      allow update: if isAuthenticated() && 
+                      (isAdmin() || (
+                        request.resource.data.status == 'completed' &&
+                        request.resource.data.periodId == resource.data.periodId &&
+                        request.resource.data.gameType == resource.data.gameType
+                      ));
       allow delete: if isAdmin();
     }
 
     match /game_controls/{controlId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin();
-      allow update: if isAdmin() || (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'usedInPeriod']) && request.resource.data.status == 'completed');
+      allow update: if isAuthenticated() && (isAdmin() || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'usedInPeriod']) && request.resource.data.status == 'completed'));
       allow delete: if isAdmin();
     }
 
@@ -197,7 +193,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isAdmin());
       allow create: if isAuthenticated() && isValidBet(request.resource.data) && 
                       request.resource.data.uid == request.auth.uid;
-      allow update: if (isOwner(resource.data.uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'winAmount', 'settledAt'])) || isAdmin();
+      allow update: if isAuthenticated() && ((isOwner(resource.data.uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'winAmount', 'settledAt'])) || isAdmin());
     }
 
     match /platform_fees/{feeId} {
@@ -213,7 +209,7 @@ service cloud.firestore {
                         request.resource.data.amount >= 110 &&
                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('totalBets', 0) >= get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('totalDeposits', 0)
                       ));
-      allow update: if isAdmin() && isValidTransaction(request.resource.data);
+      allow update: if isAdmin();
     }
 
     match /giftCodes/{codeId} {

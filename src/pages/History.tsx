@@ -189,7 +189,7 @@ export default function History() {
                     {t.status === 'completed' ? (
                       <CheckCircle2 className="w-3 h-3 text-emerald-500" />
                     ) : t.status === 'pending' ? (
-                      <Clock className="w-3 h-3 text-yellow-500" />
+                      <img src="/images/icons/time.png" alt="Pending" className="w-3 h-3 object-contain" />
                     ) : (
                       <XCircle className="w-3 h-3 text-rose-500" />
                     )}

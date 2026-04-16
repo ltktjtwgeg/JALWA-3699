@@ -7,7 +7,7 @@ export default function CustomerService() {
   const navigate = useNavigate();
 
   const handleTelegramClick = () => {
-    window.open('https://t.me/jalwa369_support', '_blank');
+    window.open('https://t.me/JALWA369official', '_blank');
   };
 
   return (
@@ -23,26 +23,16 @@ export default function CustomerService() {
 
       {/* Banner */}
       <div className="relative h-48 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-orange-400 via-pink-500 to-blue-500 opacity-80" />
         <img 
-          src="https://picsum.photos/seed/support/800/400" 
+          src="/images/banners/customer_service.png" 
           alt="Customer Service" 
-          className="w-full h-full object-cover mix-blend-overlay"
+          className="w-full h-full object-cover"
+          onError={(e) => {
+            e.currentTarget.src = 'https://picsum.photos/seed/support/800/400';
+          }}
           referrerPolicy="no-referrer"
         />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-center">
-            <div className="w-20 h-20 bg-white/20 backdrop-blur-md rounded-full flex items-center justify-center mx-auto mb-2 border border-white/30 overflow-hidden p-3">
-              <img 
-                src="/images/logo/logo_new.png" 
-                alt="Logo" 
-                className="w-full h-full object-contain" 
-                referrerPolicy="no-referrer"
-              />
-            </div>
-            <p className="text-white font-bold text-sm tracking-wide uppercase">24/7 Support</p>
-          </div>
-        </div>
+        <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px]" />
       </div>
 
       {/* Contact Options */}

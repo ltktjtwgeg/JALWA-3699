@@ -104,7 +104,7 @@ export default function AddBankCard() {
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-gray-400">
             <Landmark className="w-4 h-4 text-indigo-500" />
-            <span className="text-xs font-bold">Choose a bank</span>
+            <span className="text-[10px] font-bold uppercase tracking-tighter">Choose a bank</span>
           </div>
           <button 
             onClick={() => setShowBankList(true)}
@@ -121,14 +121,14 @@ export default function AddBankCard() {
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-gray-400">
             <User className="w-4 h-4 text-indigo-500" />
-            <span className="text-xs font-bold">Full recipient's name</span>
+            <span className="text-[10px] font-bold uppercase tracking-tighter">Full recipient's name</span>
           </div>
           <input
             type="text"
             placeholder="Please enter the recipient's name"
             value={formData.recipientName}
             onChange={(e) => setFormData({ ...formData, recipientName: e.target.value })}
-            className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+            className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
 
@@ -136,14 +136,14 @@ export default function AddBankCard() {
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-gray-400">
             <CreditCard className="w-4 h-4 text-indigo-500" />
-            <span className="text-xs font-bold">Bank account number</span>
+            <span className="text-[10px] font-bold uppercase tracking-tighter">Bank account number</span>
           </div>
           <input
             type="text"
             placeholder="Please enter your bank account number"
             value={formData.accountNumber}
             onChange={(e) => setFormData({ ...formData, accountNumber: e.target.value })}
-            className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+            className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
 
@@ -151,7 +151,7 @@ export default function AddBankCard() {
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-gray-400">
             <Smartphone className="w-4 h-4 text-indigo-500" />
-            <span className="text-xs font-bold">Phone number</span>
+            <span className="text-[10px] font-bold uppercase tracking-tighter">Phone number</span>
           </div>
           <input
             type="tel"
@@ -164,7 +164,7 @@ export default function AddBankCard() {
                 setFormData({ ...formData, phoneNumber: val });
               }
             }}
-            className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+            className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
 
@@ -172,14 +172,14 @@ export default function AddBankCard() {
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-gray-400">
             <Mail className="w-4 h-4 text-indigo-500" />
-            <span className="text-xs font-bold">Mail</span>
+            <span className="text-[10px] font-bold uppercase tracking-tighter">Mail</span>
           </div>
           <input
             type="email"
             placeholder="please input your email"
             value={formData.email}
             onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-            className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+            className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
 
@@ -187,21 +187,21 @@ export default function AddBankCard() {
         <div className="space-y-3">
           <div className="flex items-center gap-2 text-gray-400">
             <Search className="w-4 h-4 text-indigo-500" />
-            <span className="text-xs font-bold">IFSC code</span>
+            <span className="text-[10px] font-bold uppercase tracking-tighter">IFSC code</span>
           </div>
           <input
             type="text"
             placeholder="Please enter IFSC code"
             value={formData.ifscCode}
             onChange={(e) => setFormData({ ...formData, ifscCode: e.target.value })}
-            className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+            className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
 
         {/* Save Button */}
         <button
           onClick={handleSubmit}
-          className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-black py-4 rounded-full shadow-xl hover:opacity-90 transition-all uppercase tracking-widest"
+          className="w-full bg-gradient-to-r from-gray-200 to-gray-400 text-gray-900 font-black py-4 rounded-full shadow-xl hover:from-white hover:to-gray-300 transition-all uppercase tracking-widest"
         >
           Save
         </button>

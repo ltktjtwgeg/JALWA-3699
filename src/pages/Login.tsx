@@ -48,7 +48,7 @@ export default function Login() {
     e.preventDefault();
     const identifier = loginMethod === 'email' ? email : phone;
     if (!identifier || !password) return toast.error('Please fill all fields');
-    if (loginMethod === 'phone' && identifier.length !== 10) return toast.error('Phone number must be 10 digits');
+    if (loginMethod === 'phone' && (identifier.length < 10 || identifier.length > 15)) return toast.error('Phone number must be between 10 and 15 digits');
     
     setLoading(true);
     try {
@@ -94,9 +94,12 @@ export default function Login() {
           <div className="flex items-center gap-2">
             <div className="bg-white/20 p-1 rounded-lg backdrop-blur-md">
               <img 
-                src="/images/logo/logo_new.png" 
+                src="/images/logo/logo.png" 
                 alt="Logo" 
-                className="h-6 object-contain" 
+                className="h-10 object-contain" 
+                onError={(e) => {
+                  e.currentTarget.src = "https://picsum.photos/seed/logo/200/200";
+                }}
                 referrerPolicy="no-referrer"
               />
             </div>
@@ -149,13 +152,13 @@ export default function Login() {
                 </div>
                 <input
                   type="tel"
-                  maxLength={10}
+                  maxLength={15}
                   placeholder="Please enter the phone number"
                   className="flex-1 bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-purple-500 outline-none transition-all text-sm"
                   value={phone}
                   onChange={(e) => {
                     const val = e.target.value.replace(/\D/g, '');
-                    if (val.length <= 10) {
+                    if (val.length <= 15) {
                       setPhone(val);
                     }
                   }}
@@ -243,7 +246,11 @@ export default function Login() {
                 <span className="text-[10px] text-purple-400 font-bold">Demo Login</span>
               </button>
             )}
-            <button type="button" className="flex flex-col items-center gap-1 group">
+            <button 
+              type="button" 
+              onClick={() => navigate('/customer-service')}
+              className="flex flex-col items-center gap-1 group"
+            >
               <div className="w-10 h-10 bg-[#2a2e35] rounded-full flex items-center justify-center group-hover:bg-purple-500/20 transition-all border border-gray-800">
                 <Headphones className="w-5 h-5 text-purple-400" />
               </div>

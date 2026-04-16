@@ -143,7 +143,7 @@ export default function SettingsPage() {
             <div className="relative">
               <div className="w-20 h-20 rounded-full bg-gray-800 border-2 border-purple-500/30 overflow-hidden">
                 <img 
-                  src={user?.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${user?.username}`} 
+                  src={user?.avatarUrl || '/images/avatars/1.png'} 
                   alt="avatar" 
                   className="w-full h-full object-cover"
                   referrerPolicy="no-referrer"

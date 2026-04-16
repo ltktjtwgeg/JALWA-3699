@@ -27,11 +27,11 @@ export default function Home() {
   }, [banners.length]);
 
   const gameModes = [
-    { id: '1m', name: 'Wingo 1M', time: '1 Min', color: 'bg-rose-600', image: '/images/wingo_game/logo.png', fallback: 'https://picsum.photos/seed/wingo1m/200/200', category: 'popular' },
-    { id: '30s', name: 'Wingo 30s', time: '30 Sec', color: 'bg-rose-500', image: '/images/wingo_game/logo.png', fallback: 'https://picsum.photos/seed/wingo30/200/200', category: 'lottery' },
-    { id: '1m_lottery', id_real: '1m', name: 'Wingo 1M', time: '1 Min', color: 'bg-rose-600', image: '/images/wingo_game/logo.png', fallback: 'https://picsum.photos/seed/wingo1m/200/200', category: 'lottery' },
-    { id: '3m', name: 'Wingo 3M', time: '3 Min', color: 'bg-rose-700', image: '/images/wingo_game/logo.png', fallback: 'https://picsum.photos/seed/wingo3m/200/200', category: 'lottery' },
-    { id: '5m', name: 'Wingo 5M', time: '5 Min', color: 'bg-rose-800', image: '/images/wingo_game/logo.png', fallback: 'https://picsum.photos/seed/wingo5m/200/200', category: 'lottery' },
+    { id: '1m', name: 'Wingo 1M', time: '1 Min', color: 'bg-rose-600', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo1m/200/200', category: 'popular' },
+    { id: '30s', name: 'Wingo 30s', time: '30 Sec', color: 'bg-rose-500', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo30/200/200', category: 'lottery' },
+    { id: '1m_lottery', id_real: '1m', name: 'Wingo 1M', time: '1 Min', color: 'bg-rose-600', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo1m/200/200', category: 'lottery' },
+    { id: '3m', name: 'Wingo 3M', time: '3 Min', color: 'bg-rose-700', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo3m/200/200', category: 'lottery' },
+    { id: '5m', name: 'Wingo 5M', time: '5 Min', color: 'bg-rose-800', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo5m/200/200', category: 'lottery' },
   ];
 
   const categories = [
@@ -58,15 +58,18 @@ export default function Home() {
       <div className="bg-[#2a2e35] p-3 flex items-center justify-between sticky top-0 z-50 border-b border-gray-800">
         <div className="flex items-center gap-2 bg-indigo-900/40 px-3 py-1.5 rounded-full border border-white/10">
           <span className="text-yellow-400 font-bold text-xs">₹{user?.balance.toFixed(2)}</span>
-          <button onClick={() => navigate('/wallet')} className="bg-yellow-500 rounded-full p-0.5">
+          <button onClick={() => navigate('/deposit')} className="bg-yellow-500 rounded-full p-0.5">
             <Plus className="w-3 h-3 text-black" />
           </button>
         </div>
         
         <img 
-          src="/images/logo/logo_new.png" 
+          src="/images/logo/logo.png" 
           alt="Logo" 
-          className="h-7 object-contain" 
+          className="h-10 object-contain" 
+          onError={(e) => {
+            e.currentTarget.src = "https://picsum.photos/seed/logo/200/200";
+          }}
           referrerPolicy="no-referrer"
         />
 
@@ -171,7 +174,9 @@ export default function Home() {
                   <img 
                     src="/images/backgrounds/ticket_bg.png" 
                     className="absolute inset-0 h-full w-full object-fill opacity-40"
-                    onError={(e) => e.currentTarget.style.display = 'none'}
+                    onError={(e) => {
+                      e.currentTarget.src = "/images/backgrounds/game_top_bg.jpg";
+                    }}
                     referrerPolicy="no-referrer"
                   />
                   
@@ -227,31 +232,6 @@ export default function Home() {
             ))
           )}
         </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="px-3 mt-6 grid grid-cols-2 gap-3">
-        <button className="bg-[#2a2e35] p-4 rounded-2xl flex items-center gap-3 border border-gray-800 hover:bg-gray-800 transition-colors">
-          <div className="bg-blue-500/20 p-2 rounded-xl">
-            <History className="w-5 h-5 text-blue-400" />
-          </div>
-          <div className="text-left">
-            <p className="text-xs font-bold">Game History</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-tighter">View results</p>
-          </div>
-        </button>
-        <button 
-          onClick={() => navigate('/settings')}
-          className="bg-[#2a2e35] p-4 rounded-2xl flex items-center gap-3 border border-gray-800 hover:bg-gray-800 transition-colors"
-        >
-          <div className="bg-emerald-500/20 p-2 rounded-xl">
-            <ShieldCheck className="w-5 h-5 text-emerald-400" />
-          </div>
-          <div className="text-left">
-            <p className="text-xs font-bold">Security</p>
-            <p className="text-[10px] text-gray-500 uppercase tracking-tighter">Account safety</p>
-          </div>
-        </button>
       </div>
 
       <BottomNav />

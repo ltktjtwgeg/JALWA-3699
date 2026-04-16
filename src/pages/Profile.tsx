@@ -69,7 +69,7 @@ export default function Profile() {
         <div className="flex items-center gap-4 mb-6">
           <div className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md border-2 border-white/40 overflow-hidden flex items-center justify-center shadow-xl">
             <img 
-              src={user?.avatarUrl || `https://api.dicebear.com/7.x/adventurer/svg?seed=${user?.username}`} 
+              src={user?.avatarUrl || '/images/avatars/1.png'} 
               alt="avatar" 
               className="w-full h-full object-cover"
               referrerPolicy="no-referrer"
@@ -125,7 +125,7 @@ export default function Profile() {
               </div>
               <span className="text-[10px] font-bold text-gray-400">Wallet</span>
             </div>
-            <div onClick={() => navigate('/wallet')} className="flex flex-col items-center gap-2 cursor-pointer group">
+            <div onClick={() => navigate('/deposit')} className="flex flex-col items-center gap-2 cursor-pointer group">
               <div className="w-12 h-12 bg-orange-500/10 rounded-2xl flex items-center justify-center group-hover:bg-orange-500/20 transition-colors">
                 <ArrowDownCircle className="w-6 h-6 text-orange-500" />
               </div>
@@ -137,7 +137,7 @@ export default function Profile() {
               </div>
               <span className="text-[10px] font-bold text-gray-400">Withdraw</span>
             </div>
-            <div className="flex flex-col items-center gap-2 cursor-pointer group">
+            <div onClick={() => navigate('/vip')} className="flex flex-col items-center gap-2 cursor-pointer group">
               <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors">
                 <Trophy className="w-6 h-6 text-emerald-500" />
               </div>

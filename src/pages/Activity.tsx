@@ -38,9 +38,12 @@ export default function Activity() {
       {/* Header */}
       <div className="bg-[#2a2e35] p-4 flex items-center justify-center sticky top-0 z-50 border-b border-gray-800">
         <img 
-          src="/images/logo/logo_new.png" 
+          src="/images/logo/logo.png" 
           alt="Logo" 
-          className="h-8 object-contain" 
+          className="h-10 object-contain" 
+          onError={(e) => {
+            e.currentTarget.src = "https://picsum.photos/seed/logo/200/200";
+          }}
           referrerPolicy="no-referrer"
         />
       </div>

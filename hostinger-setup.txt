@@ -1,0 +1,33 @@
+HOSTINGER DEPLOYMENT GUIDE FOR YOUR GAME
+==========================================
+
+1. PREREQUISITES:
+   - Hostinger VPS or Node.js Hosting plan.
+   - Domain already purchased in Hostinger.
+
+2. UPLOAD STEPS:
+   - Download the ZIP of this project.
+   - Upload all files to the 'public_html' or your app directory in Hostinger.
+
+3. INSTALLATION (Via SSH):
+   cd /path/to/your/app
+   npm install
+
+4. BUILD FRONTEND:
+   npm run build
+
+5. START SERVER (Using PM2 for 24/7 uptime):
+   npm install -g pm2
+   pm2 start server.ts --name "my-game" --interpreter ./node_modules/.bin/tsx
+   pm2 save
+
+6. DOMAIN CONNECTION:
+   - In Hostinger Panel, go to Domains -> [Your Domain] -> DNS / Nameservers.
+   - Ensure the A record points to your Server IP.
+   - If using Node.js Hosting, use the "Setup Domain" option in the Node.js dashboard.
+
+7. ENVIRONMENT VARIABLES:
+   Make sure to set these in Hostinger:
+   - PORT=3000
+   - NODE_ENV=production
+   - GEMINI_API_KEY= (Your Key)

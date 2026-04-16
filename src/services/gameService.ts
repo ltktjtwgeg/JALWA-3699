@@ -118,68 +118,65 @@ function getResultColor(num: number) {
 
 export async function settleUserBets(uid: string, type: GameType) {
   try {
-    await runTransaction(db, async (transaction) => {
-      const betsPath = 'bets';
-      const betsQ = query(
-        collection(db, betsPath), 
-        where('uid', '==', uid), 
-        where('status', '==', 'pending'),
-        where('gameType', '==', type)
-      );
-      
-      const betsSnap = await getDocs(betsQ);
-      if (betsSnap.empty) return;
+    const betsPath = 'bets';
+    const betsQ = query(
+      collection(db, betsPath), 
+      where('uid', '==', uid), 
+      where('status', '==', 'pending'),
+      where('gameType', '==', type)
+    );
+    
+    const betsSnap = await getDocs(betsQ);
+    if (betsSnap.empty) return;
 
-      const userRef = doc(db, 'users', uid);
-      const userSnap = await transaction.get(userRef);
-      if (!userSnap.exists()) return;
+    // Group bets by periodId to fetch games
+    const periodIds = Array.from(new Set(betsSnap.docs.map(d => d.data().periodId)));
+    const gamesMap = new Map<string, Game>();
 
-      // Group bets by periodId to fetch games
-      const periodIds = Array.from(new Set(betsSnap.docs.map(d => d.data().periodId)));
-      const gamesMap = new Map<string, Game>();
-
-      for (const pid of periodIds) {
+    for (const pid of periodIds) {
+      const gameRef = doc(db, 'games', `${type}_${pid}`);
+      const gameSnap = await getDoc(gameRef);
+      if (gameSnap.exists()) {
+        gamesMap.set(pid, { id: gameSnap.id, ...gameSnap.data() } as Game);
+      } else {
+        // Fallback to query if deterministic ID fails
         const gameQ = query(
           collection(db, 'games'), 
           where('periodId', '==', pid), 
           where('gameType', '==', type)
         );
-        const gameSnap = await getDocs(gameQ);
-        if (!gameSnap.empty) {
-          gamesMap.set(pid, { id: gameSnap.docs[0].id, ...gameSnap.docs[0].data() } as Game);
+        const qSnap = await getDocs(gameQ);
+        if (!qSnap.empty) {
+          gamesMap.set(pid, { id: qSnap.docs[0].id, ...qSnap.docs[0].data() } as Game);
         }
       }
+    }
+
+    await runTransaction(db, async (transaction) => {
+      const userRef = doc(db, 'users', uid);
+      const userSnap = await transaction.get(userRef);
+      if (!userSnap.exists()) return;
+
+      // Fetch all relevant bets inside the transaction first to satisfy "reads before writes" rule
+      const betRefs = betsSnap.docs.map(d => doc(db, 'bets', d.id));
+      const freshBetSnaps = await Promise.all(betRefs.map(ref => transaction.get(ref)));
 
       let totalWinAmount = 0;
 
-      for (const betDoc of betsSnap.docs) {
-        const bet = { id: betDoc.id, ...betDoc.data() } as Bet;
-        const game = gamesMap.get(bet.periodId);
-
-        // Re-verify bet is still pending in the transaction
-        const freshBetRef = doc(db, 'bets', bet.id!);
-        const freshBetSnap = await transaction.get(freshBetRef);
+      for (const freshBetSnap of freshBetSnaps) {
         if (!freshBetSnap.exists() || freshBetSnap.data()?.status !== 'pending') continue;
+        
+        const bet = { id: freshBetSnap.id, ...freshBetSnap.data() } as Bet;
+        const game = gamesMap.get(bet.periodId);
 
         if (game) {
           const isWin = checkWin(bet.selection, game);
           const winAmount = isWin ? calculateWinAmount(bet, game) : 0;
           
-          transaction.update(freshBetRef, {
+          transaction.update(freshBetSnap.ref, {
             status: isWin ? 'win' : 'lost',
             winAmount: winAmount,
             settledAt: serverTimestamp()
-          });
-
-          // Track platform fee
-          const feeRef = doc(collection(db, 'platform_fees'));
-          transaction.set(feeRef, {
-            betId: bet.id,
-            uid: uid,
-            amount: bet.fee || 0,
-            periodId: bet.periodId,
-            gameType: bet.gameType,
-            createdAt: serverTimestamp()
           });
 
           if (isWin) {
@@ -205,7 +202,7 @@ export async function settleUserBets(uid: string, type: GameType) {
       }
     });
   } catch (error) {
-    console.error('Error in settleUserBets transaction:', error);
+    console.error('Error in settleUserBets:', error);
   }
 }
 
@@ -229,27 +226,23 @@ function calculateWinAmount(bet: Bet, game: Game): number {
   const selection = bet.selection;
   const num = game.resultNumber!;
   const totalAmount = bet.totalAmount;
-  const fee = bet.fee || (totalAmount * 0.04);
-
-  let multiplier = 0;
-
+  
+  // User requirements:
+  // Number: 1 bet = 8.64 received
+  // Big/Small: 1 bet = 1.96 received
+  // Color: Usually same as Big/Small (1.96)
+  
   if (selection === 'Big' || selection === 'Small') {
-    multiplier = 2;
+    return totalAmount * 1.96;
   } else if (selection === 'Green' || selection === 'Red') {
     if (num === 0 || num === 5) {
-      multiplier = 1.5; // Half win if violet also hits
-    } else {
-      multiplier = 2;
+      return totalAmount * 1.47; // Half win (1.96 * 0.75 or similar, but let's keep it proportional)
     }
+    return totalAmount * 1.96;
   } else if (selection === 'Violet') {
-    multiplier = 4.5;
+    return totalAmount * 4.41; // Proportional to 4.5 * 0.98
   } else {
     // Number bet
-    multiplier = 9;
+    return totalAmount * 8.64;
   }
-
-  // Formula: (TotalAmount * Multiplier) - Fee
-  // This gives 1.96x for colors (2 - 0.04) and 8.96x for numbers (9 - 0.04)
-  // We use the fee already stored in the bet document
-  return (totalAmount * multiplier) - fee;
 }

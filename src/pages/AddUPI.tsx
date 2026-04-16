@@ -44,21 +44,21 @@ export default function AddUPI() {
 
       <div className="p-4 space-y-6">
         <div className="flex items-center gap-2 mb-4">
-          <div className="bg-gradient-to-r from-orange-400 to-blue-500 p-1 rounded">
-            <Smartphone className="w-4 h-4 text-white" />
+          <div className="bg-gradient-to-r from-orange-400 to-blue-500 p-1.5 rounded-lg overflow-hidden">
+            <img src="/images/wallet/upi.png" className="w-4 h-4 object-contain" />
           </div>
-          <h2 className="text-sm font-black uppercase tracking-widest italic">Information UPI</h2>
+          <h2 className="text-sm font-black uppercase tracking-widest italic text-white/90">Information UPI</h2>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* UPI Name */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-gray-400 ml-1 uppercase tracking-tighter">UPI Name</label>
+            <label className="text-[10px] font-bold text-gray-500 ml-1 uppercase tracking-tighter">UPI Name</label>
             <div className="relative">
               <input
                 type="text"
                 placeholder="Please enter UPI name"
-                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
                 value={formData.upiName}
                 onChange={(e) => setFormData({ ...formData, upiName: e.target.value })}
               />
@@ -67,13 +67,13 @@ export default function AddUPI() {
 
           {/* Phone Number */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-gray-400 ml-1 uppercase tracking-tighter">phone number</label>
+            <label className="text-[10px] font-bold text-gray-500 ml-1 uppercase tracking-tighter">phone number</label>
             <div className="relative">
               <input
                 type="tel"
                 maxLength={10}
                 placeholder="Please enter the phone number"
-                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
                 value={formData.phoneNumber}
                 onChange={(e) => {
                   const val = e.target.value.replace(/\D/g, '');
@@ -93,12 +93,12 @@ export default function AddUPI() {
 
           {/* UPI ID */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-gray-400 ml-1 uppercase tracking-tighter">UPI ID</label>
+            <label className="text-[10px] font-bold text-gray-500 ml-1 uppercase tracking-tighter">UPI ID</label>
             <div className="relative">
               <input
                 type="text"
                 placeholder="Please enter your UPI ID"
-                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
                 value={formData.upiId}
                 onChange={(e) => setFormData({ ...formData, upiId: e.target.value })}
               />
@@ -107,12 +107,12 @@ export default function AddUPI() {
 
           {/* Confirm UPI ID */}
           <div className="space-y-2">
-            <label className="text-xs font-bold text-gray-400 ml-1 uppercase tracking-tighter">Confirm UPI ID</label>
+            <label className="text-[10px] font-bold text-gray-500 ml-1 uppercase tracking-tighter">Confirm UPI ID</label>
             <div className="relative">
               <input
                 type="text"
                 placeholder="Please enter your UPI ID"
-                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+                className="w-full bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-sm text-white placeholder:text-gray-600 focus:outline-none focus:border-indigo-500 transition-colors"
                 value={formData.confirmUpiId}
                 onChange={(e) => setFormData({ ...formData, confirmUpiId: e.target.value })}
               />
@@ -122,7 +122,7 @@ export default function AddUPI() {
           {/* Save Button */}
           <button
             type="submit"
-            className="w-full bg-gray-300 text-gray-800 font-black py-4 rounded-full shadow-xl hover:bg-white transition-all uppercase tracking-widest mt-8"
+            className="w-full bg-gradient-to-r from-gray-200 to-gray-400 text-gray-900 font-black py-4 rounded-full shadow-xl hover:from-white hover:to-gray-300 transition-all uppercase tracking-widest mt-8"
           >
             Save
           </button>

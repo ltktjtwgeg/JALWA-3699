@@ -13,6 +13,7 @@ import {
   XCircle,
   Rocket,
   Check,
+  Target,
   Wallet,
   Volume2,
   VolumeX,
@@ -43,6 +44,7 @@ import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Game, Bet, GameType } from '../types';
 import { toast } from 'sonner';
 import GameBall from '../components/GameBall';
+import { placeMySQLBet, getMySQLUser } from '../services/apiService';
 
 const COLORS = {
   GREEN: 'bg-emerald-500',
@@ -76,6 +78,7 @@ export default function GamePage() {
   const navigate = useNavigate();
   const [timeLeft, setTimeLeft] = useState(0);
   const [periodId, setPeriodId] = useState('');
+  const [serverTimeOffset, setServerTimeOffset] = useState(0);
   const currentPeriodRef = useRef('');
   const [history, setHistory] = useState<Game[]>([]);
   const [myBets, setMyBets] = useState<Bet[]>([]);
@@ -86,8 +89,20 @@ export default function GamePage() {
   const [isBetting, setIsBetting] = useState(false);
   const [activeTab, setActiveTab] = useState<'game' | 'chart' | 'my'>('game');
   const [showResultModal, setShowResultModal] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
   const [resultData, setResultData] = useState<{ bet: Bet; game: Game } | null>(null);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(() => {
+    const saved = localStorage.getItem('music_enabled');
+    // If music_enabled is 'true', isMuted should be false (not muted).
+    // If music_enabled is 'false', isMuted should be true (muted).
+    return saved !== null ? saved === 'false' : false;
+  });
+
+  useEffect(() => {
+    // Save the opposite of isMuted to music_enabled
+    localStorage.setItem('music_enabled', (!isMuted).toString());
+  }, [isMuted]);
+
   const shownBetIds = useRef<Set<string>>(new Set());
   const isFirstLoad = useRef(true);
   const [gamePage, setGamePage] = useState(1);
@@ -186,26 +201,47 @@ export default function GamePage() {
     }
   }, [type]);
 
-  // Timer and Period Logic
+  // Sync with Server
+  useEffect(() => {
+    const syncWithServer = async () => {
+      try {
+        const response = await fetch(`/api/current-round/${type}`);
+        const data = await response.json();
+        if (data.roundId) {
+          setPeriodId(data.roundId);
+          currentPeriodRef.current = data.roundId;
+          
+          // Calculate offset between server and client time
+          const offset = data.serverTime - Date.now();
+          setServerTimeOffset(offset);
+          
+          // Set initial time left
+          setTimeLeft(data.remainingTime);
+        }
+      } catch (error) {
+        console.error('Server sync error:', error);
+      }
+    };
+
+    syncWithServer();
+    const interval = setInterval(syncWithServer, 10000); // Sync every 10s
+    return () => clearInterval(interval);
+  }, [type]);
+
+  // Timer Logic (Synced with Server Offset)
   useEffect(() => {
     const updateTimer = () => {
-      const now = Date.now();
-      const seconds = now / 1000;
+      const now = Date.now() + serverTimeOffset;
+      const durationMs = duration * 1000;
+      const roundIndex = Math.floor(now / durationMs);
+      const roundEnd = (roundIndex + 1) * durationMs;
       
-      // Calculate round boundaries
-      const roundIndex = Math.floor(seconds / duration);
-      const roundStart = roundIndex * duration;
-      const roundEnd = roundStart + duration;
-      
-      // Calculate remaining time precisely (e.g., 59 down to 0 for a 60s game)
-      const elapsed = seconds % duration;
-      const displayTime = Math.floor(duration - elapsed);
-      
-      setTimeLeft(displayTime);
+      const remaining = Math.max(0, Math.floor((roundEnd - now) / 1000));
+      setTimeLeft(remaining);
 
       // Period ID logic
-      const roundDate = new Date(roundStart * 1000);
-      const dateStr = roundDate.toISOString().slice(0, 10).replace(/-/g, '');
+      const date = new Date(roundIndex * durationMs);
+      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
       const newPeriodId = `${dateStr}${roundIndex}`;
       
       if (newPeriodId !== currentPeriodRef.current) {
@@ -214,18 +250,16 @@ export default function GamePage() {
         hasPlayedCountdown.current = false;
       }
 
-      // Play sound when displayTime hits 5 (covers 5, 4, 3, 2, 1, 0)
-      // Trigger slightly earlier to account for any delay
-      const preciseTimeLeft = duration - elapsed;
-      if (preciseTimeLeft <= 5.1 && !hasPlayedCountdown.current && !isMuted) {
+      // Play sound when displayTime hits 5
+      if (remaining <= 5 && remaining > 0 && !hasPlayedCountdown.current && !isMuted) {
         playSound(SOUNDS.TICK);
         hasPlayedCountdown.current = true;
       }
     };
 
-    const interval = setInterval(updateTimer, 50);
+    const interval = setInterval(updateTimer, 100);
     return () => clearInterval(interval);
-  }, [duration, isMuted]);
+  }, [duration, isMuted, serverTimeOffset]);
 
   // Fetch History
   useEffect(() => {
@@ -315,6 +349,24 @@ export default function GamePage() {
 
     setIsBetting(true);
     try {
+      // Try MySQL first if configured
+      const mysqlResult = await placeMySQLBet({
+        uid: user.uid,
+        roundId: periodId,
+        gameType: type || '1m',
+        selection: selectedBet,
+        amount: total
+      });
+
+      if (mysqlResult && !mysqlResult.error) {
+        setShowBetModal(false);
+        toast.success('Bet placed successfully!');
+        playSound(SOUNDS.BET);
+        refreshUser();
+        return;
+      }
+
+      // Fallback to Firebase (Existing logic)
       await runTransaction(db, async (transaction) => {
         const userRef = doc(db, 'users', user.uid);
         const userSnap = await transaction.get(userRef);
@@ -479,21 +531,54 @@ export default function GamePage() {
   return (
     <div className="flex flex-col min-h-screen bg-[#1a1d21] pb-10">
       {/* Header */}
-      <div className="p-4 flex items-center justify-between sticky top-0 bg-[#1a1d21] z-20 border-b border-gray-800">
+      <div 
+        className="p-4 flex items-center justify-between sticky top-0 bg-[#1a1d21] z-20 border-b border-gray-800"
+        style={{ width: '370.323px', height: '49.6667px' }}
+      >
         <button onClick={() => navigate('/')} className="p-2 hover:bg-gray-800 rounded-full">
           <ChevronLeft className="w-6 h-6" />
         </button>
         <div className="flex flex-col items-center">
           <img 
-            src="/images/logo/logo_new.png" 
+            src="/images/logo/logo.png" 
             alt="Logo" 
-            className="h-8 object-contain" 
+            className="h-12 object-contain" 
+            style={{
+              paddingTop: '-3px',
+              paddingBottom: '-6px',
+              marginBottom: '0px',
+              width: '100px',
+              height: '39px',
+              fontSize: '23px',
+              fontFamily: 'Arial',
+              textDecorationLine: 'underline',
+              fontStyle: 'normal',
+              fontWeight: 'normal',
+              lineHeight: '18px',
+              borderRadius: '0px',
+              borderWidth: '0px',
+              marginLeft: '31px',
+              marginRight: '-3px',
+              paddingRight: '-1px',
+              paddingLeft: '2px'
+            }}
+            onError={(e) => {
+              e.currentTarget.src = "https://picsum.photos/seed/logo/200/200";
+            }}
             referrerPolicy="no-referrer"
           />
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={() => setIsMuted(!isMuted)} className="p-2 hover:bg-gray-800 rounded-full">
-            {isMuted ? <VolumeX className="w-5 h-5 text-gray-500" /> : <Volume2 className="w-5 h-5 text-purple-400" />}
+          <button onClick={() => setIsMuted(!isMuted)} className="p-1 hover:bg-gray-800 rounded-full">
+            <img 
+              src={!isMuted ? "/images/icons/music_on.png" : "/images/icons/music_off.png"} 
+              alt="Music" 
+              className="w-8 h-8 object-contain"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+                e.currentTarget.parentElement?.insertAdjacentHTML('beforeend', !isMuted ? '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-volume2 text-purple-400"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>' : '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-volumex text-gray-500"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="22" x2="16" y1="9" y2="15"/><line x1="16" x2="22" y1="9" y2="15"/></svg>');
+              }}
+            />
           </button>
           <button onClick={() => navigate('/customer-service')} className="p-1 hover:bg-gray-800 rounded-full">
             <img 
@@ -507,7 +592,7 @@ export default function GamePage() {
       </div>
 
       {/* Wallet Card */}
-      <div className="px-4 py-4">
+      <div className="px-4 py-4 mb-[-14px]">
         <div className="relative overflow-hidden rounded-[24px] shadow-xl aspect-[2.4/1] border border-white/10">
           <img 
             src="/images/backgrounds/game_top_bg.jpg" 
@@ -515,7 +600,7 @@ export default function GamePage() {
             className="absolute inset-0 w-full h-full object-cover"
             referrerPolicy="no-referrer"
           />
-          <div className="relative h-full flex flex-col justify-between p-5">
+          <div className="relative h-full flex flex-col justify-between p-5 pb-[10px] mr-[-4px] mb-[-3px] pt-[6px]">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="p-1.5 bg-white/20 rounded-lg backdrop-blur-sm">
@@ -539,13 +624,13 @@ export default function GamePage() {
 
             <div className="flex gap-4">
               <button 
-                onClick={() => navigate('/wallet/recharge')}
+                onClick={() => navigate('/deposit')}
                 className="flex-1 bg-gradient-to-r from-[#ffb347] to-[#ff8c00] text-white py-2.5 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-orange-900/20 active:scale-95 transition-all"
               >
                 Deposit
               </button>
               <button 
-                onClick={() => navigate('/wallet/withdraw')}
+                onClick={() => navigate('/withdraw')}
                 className="flex-1 bg-white/10 backdrop-blur-md text-white py-2.5 rounded-xl text-xs font-black uppercase tracking-widest border border-white/20 shadow-lg active:scale-95 transition-all"
               >
                 Withdraw
@@ -556,14 +641,14 @@ export default function GamePage() {
       </div>
 
       {/* Announcement */}
-      <div className="px-4 mb-4">
+      <div className="px-4 mb-4 mr-[2px] mb-[3px]">
         <div className="bg-[#1f2228] rounded-full p-2 flex items-center gap-3 border border-gray-800">
           <div className="p-1.5 bg-purple-500/20 rounded-full">
             <Megaphone className="w-4 h-4 text-purple-400" />
           </div>
           <div className="flex-1 overflow-hidden">
             <p className="text-[10px] text-gray-400 whitespace-nowrap animate-marquee">
-              Our customer service will never send any links to members—if you receive a link from someone claiming to be customer service, please do not click it.
+              Invite your friends and earn! Refer a friend and get a flat 20% bonus on their first deposit.
             </p>
           </div>
           <button className="bg-gradient-to-r from-purple-600 to-blue-500 text-[10px] px-4 py-1.5 rounded-full font-bold shadow-lg">
@@ -573,8 +658,14 @@ export default function GamePage() {
       </div>
 
       {/* Game Mode Selection */}
-      <div className="px-4 mb-6">
-        <div className="grid grid-cols-4 gap-2">
+      <div 
+        className="px-4 mb-6"
+        style={{ marginLeft: '-1px', paddingLeft: '21px', paddingTop: '1px' }}
+      >
+        <div 
+          className="grid grid-cols-4 gap-2"
+          style={{ marginLeft: '-3px', paddingBottom: '-7px', paddingRight: '-4px', marginRight: '-7px', marginBottom: '-15px' }}
+        >
           {gameModes.map((mode) => (
             <button
               key={mode.id}
@@ -586,7 +677,15 @@ export default function GamePage() {
                   : "bg-[#1f2228] border-gray-800 text-gray-500"
               )}
             >
-              <Clock className={cn("w-6 h-6 mb-2", type === mode.id ? "text-white" : "text-gray-600")} />
+              <img 
+                src="/images/icons/time.png" 
+                alt={mode.label} 
+                className={cn("w-8 h-8 mb-2 object-contain", type !== mode.id && "opacity-50 grayscale")}
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  e.currentTarget.parentElement?.insertAdjacentHTML('afterbegin', `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-clock w-6 h-6 mb-2 ${type === mode.id ? 'text-white' : 'text-gray-600'}"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`);
+                }}
+              />
               <span className="text-[10px] font-bold text-center leading-tight">{mode.label}</span>
             </button>
           ))}
@@ -600,17 +699,26 @@ export default function GamePage() {
           <img 
             src="/images/backgrounds/ticket_bg.png" 
             className="absolute inset-0 h-full w-full object-fill"
-            onError={(e) => e.currentTarget.style.display = 'none'}
+            onError={(e) => {
+              e.currentTarget.src = "/images/backgrounds/game_top_bg.jpg";
+            }}
             referrerPolicy="no-referrer"
           />
           
           {/* Fallback Gradient (if image fails) */}
           <div className="absolute inset-0 -z-10 bg-gradient-to-r from-[#ff8a71] via-[#9d6eff] to-[#4facfe] opacity-90" />
 
-          <div className="relative flex h-full items-center justify-between px-6 py-4">
+          <div 
+            className="relative flex h-full items-center justify-between px-6 py-4 text-[22px] leading-[14px]"
+            style={{ paddingTop: '21px', paddingBottom: '4px', paddingRight: '64px', height: '107.292px', width: '395px' }}
+          >
             {/* Left Side */}
             <div className="flex h-full flex-col justify-between py-1">
-              <button className="flex w-fit items-center gap-2 rounded-full border border-black/20 bg-black/10 px-4 py-1.5 text-[10px] font-bold text-black/70 backdrop-blur-sm transition-all hover:bg-black/20">
+              <button 
+                onClick={() => setShowRulesModal(true)}
+                className="flex w-fit items-center gap-2 rounded-full border border-black/20 bg-black/10 text-[10px] font-bold text-black/70 backdrop-blur-sm transition-all hover:bg-black/20 leading-[10px] text-justify"
+                style={{ paddingLeft: '13px', paddingRight: '22px', paddingBottom: '5px', paddingTop: '9px', marginLeft: '4px', marginRight: '5px', marginTop: '-9px' }}
+              >
                 <BookOpen className="w-3 h-3" />
                 How to play
               </button>
@@ -630,7 +738,7 @@ export default function GamePage() {
             {/* Right Side */}
             <div className="flex h-full flex-col items-end justify-between py-1 text-right">
               <div>
-                <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-black/60">Time remaining</p>
+                <p className="mb-2 text-[13px] font-black uppercase tracking-wider text-black/60 pb-0 pt-0 ml-0 mt-[5px]">Time remaining</p>
                 <div className="flex items-center gap-1">
                   <div className="flex gap-0.5">
                     <div className="flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black text-white shadow-inner font-mono leading-none">
@@ -663,30 +771,39 @@ export default function GamePage() {
 
       {/* Betting Buttons Section */}
       <div className="px-4 mb-6">
-        <div className="bg-[#1f2228] rounded-[32px] p-6 border border-gray-800 shadow-xl">
+        <div 
+          className="bg-[#1f2228] rounded-[32px] p-6 border border-gray-800 shadow-xl ml-[-12px] mr-[-13px] pt-[5px] pb-[5px]"
+          style={{ width: '370.333px', height: '307.656px' }}
+        >
           <div className="space-y-6">
-            <div className="grid grid-cols-3 gap-3">
+            <div 
+              className="grid grid-cols-3 gap-3"
+              style={{ marginRight: '-13px', marginBottom: '-6px', marginTop: '4px' }}
+            >
               <button 
                 onClick={() => { setSelectedBet('Green'); setShowBetModal(true); }}
-                className="bg-[#10b981] hover:bg-emerald-600 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-900/20 transition-all active:scale-95"
+                className="bg-[#10b981] hover:bg-emerald-600 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-emerald-900/20 transition-all active:scale-95 pt-0 pl-[3px] pr-0 pb-0 ml-[-12px] mt-[-1px] mb-[6px] mr-[11px]"
               >
                 Green
               </button>
               <button 
                 onClick={() => { setSelectedBet('Violet'); setShowBetModal(true); }}
-                className="bg-[#a855f7] hover:bg-purple-600 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-purple-900/20 transition-all active:scale-95"
+                className="bg-[#a855f7] hover:bg-purple-600 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-purple-900/20 transition-all active:scale-95 pt-0 pl-[3px] pb-0 ml-[-6px] mr-[4px] mt-[-1px] mb-[6px]"
               >
                 Violet
               </button>
               <button 
                 onClick={() => { setSelectedBet('Red'); setShowBetModal(true); }}
-                className="bg-[#f43f5e] hover:bg-rose-600 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-rose-900/20 transition-all active:scale-95"
+                className="bg-[#f43f5e] hover:bg-rose-600 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-rose-900/20 transition-all active:scale-95 mt-[-1px] ml-[-3px] mr-[-6px] pl-[3px] mb-[6px]"
               >
                 Red
               </button>
             </div>
 
-            <div className="bg-[#1a1d21] rounded-2xl p-4 border border-gray-800/50">
+            <div 
+              className="bg-[#1a1d21] rounded-[8px] p-4 border-[0px] border-gray-800/50 pt-[11px] ml-[-21px] mr-[-20px] mb-[5px] mt-[10px] pr-0 pb-[15px] pl-[2px]"
+              style={{ width: '363px', height: '131px', marginRight: '-13px', paddingLeft: '-3px', paddingRight: '-2px', paddingBottom: '10px' }}
+            >
               <div className="grid grid-cols-5 gap-y-4 gap-x-2">
                 {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
                   <button
@@ -700,10 +817,14 @@ export default function GamePage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+            <div 
+              className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1"
+              style={{ marginBottom: '10px', marginRight: '-20px', marginLeft: '-18px', marginTop: '3px', paddingBottom: '0px', width: '361px' }}
+            >
               <button
                 onClick={handleRandom}
                 className="px-4 py-2 rounded-lg border border-rose-500/50 text-rose-400 text-xs font-bold whitespace-nowrap bg-rose-500/5 hover:bg-rose-500/10 transition-all"
+                style={{ height: '30.3333px', width: '70.0938px', paddingBottom: '-3px', paddingRight: '19px', marginBottom: '1px', marginRight: '-1px', fontSize: '14px', lineHeight: '18px', marginTop: '3px', marginLeft: '1px', paddingLeft: '5px', paddingTop: '0px' }}
               >
                 Random
               </button>
@@ -718,6 +839,14 @@ export default function GamePage() {
                         ? "bg-[#10b981] text-white shadow-lg shadow-emerald-900/20" 
                         : "bg-[#2a2e35] text-gray-400 hover:text-gray-200"
                     )}
+                    style={
+                      m === 1 ? { width: '41px', height: '31px', marginRight: '-10px', paddingTop: '10px', paddingRight: '-2px', marginLeft: '1px', paddingBottom: '9px' } :
+                      m === 5 ? { width: '40px', marginLeft: '8px', paddingTop: '7px', paddingBottom: '8px', marginBottom: '0px' } :
+                      m === 10 ? { width: '38px' } :
+                      m === 20 ? { width: '38px' } :
+                      m === 50 ? { width: '38px' } :
+                      {}
+                    }
                   >
                     X{m}
                   </button>
@@ -729,12 +858,14 @@ export default function GamePage() {
               <button 
                 onClick={() => { setSelectedBet('Big'); setShowBetModal(true); }}
                 className="flex-1 bg-gradient-to-r from-[#ffb347] to-[#ffcc33] font-black text-lg text-white/90 active:scale-95 transition-all"
+                style={{ fontSize: '22px', lineHeight: '41px', paddingTop: '0px', fontWeight: 'bold' }}
               >
                 Big
               </button>
               <button 
                 onClick={() => { setSelectedBet('Small'); setShowBetModal(true); }}
                 className="flex-1 bg-gradient-to-r from-[#4facfe] to-[#00f2fe] font-black text-lg text-white/90 active:scale-95 transition-all"
+                style={{ width: '146.5px', height: '57px', lineHeight: '20px', fontSize: '22px', marginRight: '-1px', marginLeft: '-1px', marginTop: '-1px', marginBottom: '-6px', paddingTop: '-2px', paddingLeft: '-1px', paddingBottom: '-4px' }}
               >
                 Small
               </button>
@@ -744,7 +875,10 @@ export default function GamePage() {
       </div>
 
       {/* History / Chart Tabs */}
-      <div className="px-4">
+      <div 
+        className="px-4"
+        style={{ paddingLeft: '4px', paddingRight: '16px', marginLeft: '-1px', marginRight: '-1px', width: '375.333px', height: '864.667px' }}
+      >
         <div className="flex bg-[#1a1d21] p-1 rounded-2xl mb-6 border border-gray-800/50">
           <button 
             onClick={() => setActiveTab('game')}
@@ -770,6 +904,7 @@ export default function GamePage() {
               "flex-1 py-3 rounded-xl text-xs font-bold transition-all",
               activeTab === 'my' ? "bg-[#2a2e35] text-gray-500" : "text-gray-500"
             )}
+            style={{ borderStyle: 'none' }}
           >
             My history
           </button>
@@ -1077,9 +1212,14 @@ export default function GamePage() {
               {/* Close Button */}
               <button 
                 onClick={() => setShowResultModal(false)} 
-                className="absolute top-4 right-4 z-50 p-1 bg-black/20 hover:bg-black/40 rounded-full transition-all"
+                className="absolute top-4 right-4 z-50 p-1 hover:scale-110 transition-all"
               >
-                <XCircle className="w-6 h-6 text-white/80" />
+                <img 
+                  src="/images/icons/close.png" 
+                  alt="Close" 
+                  className="w-8 h-8 object-contain"
+                  referrerPolicy="no-referrer"
+                />
               </button>
 
               <div className="relative h-full flex flex-col items-center justify-between py-10 px-6">
@@ -1139,6 +1279,90 @@ export default function GamePage() {
                   </div>
                   3 seconds auto close
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Rules Modal */}
+      <AnimatePresence>
+        {showRulesModal && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-6 bg-black/80">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="w-full max-w-[360px] bg-[#1f2228] rounded-[32px] overflow-hidden border border-gray-800 shadow-2xl"
+            >
+              <div className="bg-gradient-to-r from-purple-600 to-blue-500 p-6 text-center">
+                <h3 className="text-white font-black uppercase tracking-widest">Game Rules</h3>
+              </div>
+              <div className="p-6 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                <div className="space-y-6 text-gray-300">
+                  <section>
+                    <h4 className="text-purple-400 font-bold mb-2 flex items-center gap-2">
+                      <img src="/images/icons/time.png" alt="Time" className="w-4 h-4 object-contain" /> Time Duration
+                    </h4>
+                    <p className="text-xs leading-relaxed">Each round lasts 30 seconds.</p>
+                  </section>
+
+                  <section>
+                    <h4 className="text-purple-400 font-bold mb-2 flex items-center gap-2">
+                      <Target className="w-4 h-4" /> Prediction Options
+                    </h4>
+                    <p className="text-xs leading-relaxed mb-2 text-gray-400 italic">You can place bets in 3 ways:</p>
+                    <ul className="space-y-2 text-xs">
+                      <li className="flex justify-between items-center bg-gray-800/50 p-2 rounded-lg">
+                        <span className="font-bold">Color</span>
+                        <span className="text-gray-400">Green / Red / Violet</span>
+                      </li>
+                      <li className="flex justify-between items-center bg-gray-800/50 p-2 rounded-lg">
+                        <span className="font-bold">Number</span>
+                        <span className="text-emerald-400">0 to 9 (₹1 = ₹8.64)</span>
+                      </li>
+                      <li className="flex justify-between items-center bg-gray-800/50 p-2 rounded-lg">
+                        <span className="font-bold">Big / Small</span>
+                        <span className="text-blue-400">S: 0-4 | B: 5-9 (₹1 = ₹1.96)</span>
+                      </li>
+                    </ul>
+                  </section>
+
+                  <section>
+                    <h4 className="text-purple-400 font-bold mb-2 flex items-center gap-2">
+                      <Info className="w-4 h-4" /> Color Rules
+                    </h4>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="bg-emerald-500/10 border border-emerald-500/20 p-2 rounded-lg text-center">
+                        <p className="text-emerald-500 font-bold text-[10px]">Green</p>
+                        <p className="text-[10px] text-gray-400">1, 3, 7, 9</p>
+                      </div>
+                      <div className="bg-rose-500/10 border border-rose-500/20 p-2 rounded-lg text-center">
+                        <p className="text-rose-500 font-bold text-[10px]">Red</p>
+                        <p className="text-[10px] text-gray-400">2, 4, 6, 8</p>
+                      </div>
+                      <div className="bg-purple-500/10 border border-purple-500/20 p-2 rounded-lg text-center">
+                        <p className="text-purple-500 font-bold text-[10px]">Violet</p>
+                        <p className="text-[10px] text-gray-400">0, 5</p>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section>
+                    <h4 className="text-purple-400 font-bold mb-2 flex items-center gap-2">
+                      <Rocket className="w-4 h-4" /> Bet Placement
+                    </h4>
+                    <p className="text-xs leading-relaxed">Select your choice and set the amount before the timer ends.</p>
+                  </section>
+                </div>
+              </div>
+              <div className="p-4 bg-gray-800/50">
+                <button 
+                  onClick={() => setShowRulesModal(false)}
+                  className="w-full bg-gradient-to-r from-purple-600 to-blue-500 text-white py-3 rounded-2xl font-bold uppercase tracking-widest shadow-lg active:scale-95 transition-all"
+                >
+                  I Understand
+                </button>
               </div>
             </motion.div>
           </div>

@@ -30,7 +30,7 @@ export default function Register() {
     e.preventDefault();
     const identifier = registerMethod === 'email' ? email : phone;
     if (!identifier || !password || !confirmPassword) return toast.error('Please fill all fields');
-    if (registerMethod === 'phone' && identifier.length !== 10) return toast.error('Phone number must be 10 digits');
+    if (registerMethod === 'phone' && (identifier.length < 10 || identifier.length > 15)) return toast.error('Phone number must be between 10 and 15 digits');
     if (password !== confirmPassword) return toast.error('Passwords do not match');
     if (password.length < 6) return toast.error('Password must be at least 6 characters');
     
@@ -63,7 +63,7 @@ export default function Register() {
           phoneNumber: registerMethod === 'phone' ? phone : null,
           username: `MEMBER${numericUid}`,
           nickname: `MEMBER${numericUid}`,
-          avatarUrl: `https://api.dicebear.com/7.x/adventurer/svg?seed=MEMBER${numericUid}`,
+          avatarUrl: '/images/avatars/1.png',
           balance: 0,
           totalDeposits: 0,
           totalBets: 0,
@@ -106,9 +106,12 @@ export default function Register() {
           <div className="flex items-center gap-2">
             <div className="bg-white/20 p-1 rounded-lg backdrop-blur-md">
               <img 
-                src="/images/logo/logo_new.png" 
+                src="/images/logo/logo.png" 
                 alt="Logo" 
-                className="h-6 object-contain" 
+                className="h-10 object-contain" 
+                onError={(e) => {
+                  e.currentTarget.src = "https://picsum.photos/seed/logo/200/200";
+                }}
                 referrerPolicy="no-referrer"
               />
             </div>
@@ -160,13 +163,13 @@ export default function Register() {
                 </div>
                 <input
                   type="tel"
-                  maxLength={10}
+                  maxLength={15}
                   placeholder="Please enter the phone number"
                   className="flex-1 bg-[#2a2e35] border border-gray-800 rounded-xl py-4 px-4 text-white placeholder:text-gray-600 focus:ring-1 focus:ring-purple-500 outline-none transition-all text-sm"
                   value={phone}
                   onChange={(e) => {
                     const val = e.target.value.replace(/\D/g, '');
-                    if (val.length <= 10) {
+                    if (val.length <= 15) {
                       setPhone(val);
                     }
                   }}

@@ -43,9 +43,12 @@ export default function About() {
           <div className="relative z-10 flex flex-col items-center">
              <div className="w-24 h-24 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center shadow-2xl mb-4 overflow-hidden p-2">
                 <img 
-                  src="/images/logo/logo_new.png" 
+                  src="/images/logo/logo.png" 
                   alt="Logo" 
                   className="w-full h-full object-contain" 
+                  onError={(e) => {
+                    e.currentTarget.src = "https://picsum.photos/seed/logo/200/200";
+                  }}
                   referrerPolicy="no-referrer"
                 />
              </div>
