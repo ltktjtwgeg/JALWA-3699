@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
@@ -5,10 +8,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
-import { query } from './src/lib/mysql.js'; // Use .js for ESM compatibility with tsx
-import dotenv from 'dotenv';
-
-dotenv.config();
+import { query } from './src/lib/mysql'; 
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
