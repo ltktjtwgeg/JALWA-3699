@@ -24,10 +24,12 @@ import {
   ChevronDown,
   RefreshCw,
   Search,
-  Plus
+  Plus,
+  History,
+  Trash2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getAdminStats, getSystemSettings, updateSystemSettings, SystemSettings, getGamePoolStats, setGameControl } from '../../services/adminService';
+import { getAdminStats, getSystemSettings, updateSystemSettings, SystemSettings, getGamePoolStats, setGameControl, createGiftCode, getGiftCodes, deleteGiftCode } from '../../services/adminService';
 import { formatCurrency, cn } from '../../lib/utils';
 import { toast } from 'sonner';
 import { db } from '../../firebase';
@@ -285,6 +287,35 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
   const [loading, setLoading] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState('');
   const [poolStats, setPoolStats] = React.useState<Record<string, any>>({});
+  const [giftCodes, setGiftCodes] = React.useState<any[]>([]);
+  const [newGift, setNewGift] = React.useState({ code: '', amount: 10, maxUses: 100 });
+
+  const handleCreateGift = async () => {
+    if (!newGift.code) return toast.error('Enter code');
+    try {
+      await createGiftCode(newGift.code, newGift.amount, newGift.maxUses);
+      toast.success('Gift code created');
+      setNewGift({ code: '', amount: 10, maxUses: 100 });
+      fetchGiftCodes();
+    } catch (e) {
+      toast.error('Failed to create');
+    }
+  };
+
+  const fetchGiftCodes = async () => {
+    const codes = await getGiftCodes();
+    setGiftCodes(codes);
+  };
+
+  const handleDeleteGift = async (id: string) => {
+    try {
+      await deleteGiftCode(id);
+      fetchGiftCodes();
+      toast.success('Deleted');
+    } catch (e) {
+      toast.error('Failed to delete');
+    }
+  };
 
   const handleManualControl = async (type: GameType, value: string) => {
     try {
@@ -300,6 +331,9 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
   React.useEffect(() => {
     if (view === 'Users') {
       fetchUsers();
+    }
+    if (view === 'Gift Code') {
+      fetchGiftCodes();
     }
     if (view === 'Game Settings') {
       const fetchPool = async () => {
@@ -612,7 +646,86 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
            </div>
         )}
 
-        {['Gift Code', 'Telegram', 'Add Admin', 'Demo User', 'Agent User', 'Edit Bank Details', 'Add Advanced Functions', 'Hold Wallet', 'Get User Report'].includes(view) && (
+        {view === 'Gift Code' && (
+           <div className="space-y-8">
+              <div className="bg-gray-50 p-8 rounded-[32px] border border-gray-100 shadow-sm">
+                 <h3 className="text-sm font-black text-[#7c3aed] uppercase tracking-widest mb-6">Create New Redemption Key (Gift Code)</h3>
+                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Code Name</label>
+                       <input 
+                          type="text" 
+                          placeholder="e.g. WELCOME2024"
+                          value={newGift.code}
+                          onChange={e => setNewGift({...newGift, code: e.target.value})}
+                          className="w-full p-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
+                       />
+                    </div>
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Amount (INR)</label>
+                       <input 
+                          type="number" 
+                          value={newGift.amount}
+                          onChange={e => setNewGift({...newGift, amount: parseFloat(e.target.value)})}
+                          className="w-full p-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
+                       />
+                    </div>
+                    <div className="space-y-2">
+                       <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Max Uses</label>
+                       <input 
+                          type="number" 
+                          value={newGift.maxUses}
+                          onChange={e => setNewGift({...newGift, maxUses: parseInt(e.target.value)})}
+                          className="w-full p-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
+                       />
+                    </div>
+                 </div>
+                 <button 
+                    onClick={handleCreateGift}
+                    className="mt-6 w-full md:w-auto bg-[#7c3aed] text-white px-12 py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg hover:translate-y-[-2px] active:translate-y-0 transition-all"
+                 >
+                    Generate & Save Key
+                 </button>
+              </div>
+
+              <div className="space-y-4">
+                 <div className="flex items-center gap-2 text-gray-400 ml-2">
+                    <History className="w-4 h-4" />
+                    <span className="text-[10px] font-black uppercase tracking-widest">Active Redemption Keys</span>
+                 </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {giftCodes.map((gc) => (
+                       <div key={gc.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex flex-col gap-4 relative overflow-hidden group">
+                          <div className="absolute top-0 left-0 w-1 h-full bg-[#7c3aed]" />
+                          <div className="flex items-center justify-between">
+                             <span className="font-black text-lg text-gray-800">{gc.code}</span>
+                             <span className="text-xs font-black text-[#7c3aed] bg-[#7c3aed]/10 px-3 py-1 rounded-full italic">₹{gc.amount}</span>
+                          </div>
+                          <div className="flex items-center justify-between border-t border-gray-50 pt-4">
+                             <div>
+                                <p className="text-[10px] text-gray-400 uppercase font-black">Usage</p>
+                                <p className="text-xs font-bold text-gray-600">{gc.currentUses} / {gc.maxUses}</p>
+                             </div>
+                             <button 
+                                onClick={() => handleDeleteGift(gc.id)}
+                                className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                             >
+                                <Trash2 className="w-5 h-5" />
+                             </button>
+                          </div>
+                       </div>
+                    ))}
+                    {giftCodes.length === 0 && (
+                       <div className="col-span-full py-12 text-center bg-gray-50 rounded-[32px] border-2 border-dashed border-gray-100">
+                          <p className="text-xs font-black text-gray-300 uppercase italic">No active keys found</p>
+                       </div>
+                    )}
+                 </div>
+              </div>
+           </div>
+        )}
+
+        {['Telegram', 'Add Admin', 'Demo User', 'Agent User', 'Edit Bank Details', 'Add Advanced Functions', 'Hold Wallet', 'Get User Report'].includes(view) && (
            <div className="flex flex-col items-center justify-center py-20 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200">
               <Plus className="w-12 h-12 text-gray-300 mb-4" />
               <p className="text-sm text-gray-400 font-bold uppercase tracking-widest">Manage {view} Module</p>

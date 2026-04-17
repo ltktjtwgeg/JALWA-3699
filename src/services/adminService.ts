@@ -172,3 +172,26 @@ export async function setGameControl(type: GameType, targetSize?: string, target
     createdAt: serverTimestamp()
   });
 }
+
+export async function createGiftCode(code: string, amount: number, maxUses: number) {
+  await setDoc(doc(db, 'giftCodes', code), {
+    code,
+    amount,
+    maxUses,
+    currentUses: 0,
+    isActive: true,
+    usedBy: [],
+    createdAt: serverTimestamp()
+  });
+}
+
+export async function getGiftCodes() {
+  const q = query(collection(db, 'giftCodes'), orderBy('createdAt', 'desc'));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function deleteGiftCode(id: string) {
+  const { deleteDoc } = await import('firebase/firestore');
+  await deleteDoc(doc(db, 'giftCodes', id));
+}
