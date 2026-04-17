@@ -45,6 +45,9 @@ import VIP from './pages/VIP';
 import Mines from './pages/Mines';
 import Roulette from './pages/Roulette';
 import PaymentMethods from './pages/PaymentMethods';
+import SuperAdmin from './pages/SuperAdmin';
+import AdminPortal from './pages/Admin/AdminPortal';
+import MobileLayout from './components/MobileLayout';
 
 const AuthContext = createContext<{
   user: AppUser | null;
@@ -171,39 +174,49 @@ export default function App() {
   return (
     <AuthProvider>
       <GameManager />
-      <div className="min-h-screen bg-[#1a1d21] text-white font-sans max-w-[430px] mx-auto relative shadow-2xl">
+      <div className="min-h-screen bg-[#1a1d21] text-white font-sans overflow-x-hidden">
         <BrowserRouter>
           <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/activity" element={<PrivateRoute><Activity /></PrivateRoute>} />
-            <Route path="/" element={<PrivateRoute><Home /></PrivateRoute>} />
-            <Route path="/game/:type" element={<PrivateRoute><GamePage /></PrivateRoute>} />
-            <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
-            <Route path="/wallet" element={<PrivateRoute><Wallet /></PrivateRoute>} />
-            <Route path="/deposit" element={<PrivateRoute><Deposit /></PrivateRoute>} />
-            <Route path="/withdraw" element={<PrivateRoute><Withdraw /></PrivateRoute>} />
-            <Route path="/withdraw/add-bank" element={<PrivateRoute><AddBankCard /></PrivateRoute>} />
-            <Route path="/withdraw/add-upi" element={<PrivateRoute><AddUPI /></PrivateRoute>} />
-            <Route path="/withdraw/add-usdt" element={<PrivateRoute><AddUSDT /></PrivateRoute>} />
-            <Route path="/admin" element={<PrivateRoute><Admin /></PrivateRoute>} />
-            <Route path="/history/:type" element={<PrivateRoute><History /></PrivateRoute>} />
-            <Route path="/promotion" element={<PrivateRoute><Promotion /></PrivateRoute>} />
-            <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
-            <Route path="/language" element={<PrivateRoute><Language /></PrivateRoute>} />
-            <Route path="/gift" element={<PrivateRoute><Gift /></PrivateRoute>} />
-            <Route path="/notifications" element={<PrivateRoute><Notifications /></PrivateRoute>} />
-            <Route path="/about" element={<PrivateRoute><About /></PrivateRoute>} />
-            <Route path="/about/confidentiality" element={<PrivateRoute><Confidentiality /></PrivateRoute>} />
-            <Route path="/about/risk-disclosure" element={<PrivateRoute><RiskDisclosure /></PrivateRoute>} />
-            <Route path="/announcements" element={<PrivateRoute><Announcements /></PrivateRoute>} />
-            <Route path="/feedback" element={<PrivateRoute><Feedback /></PrivateRoute>} />
-            <Route path="/customer-service" element={<PrivateRoute><CustomerService /></PrivateRoute>} />
-            <Route path="/game-statistics" element={<PrivateRoute><GameStatistics /></PrivateRoute>} />
-            <Route path="/vip" element={<PrivateRoute><VIP /></PrivateRoute>} />
-            <Route path="/mines" element={<PrivateRoute><Mines /></PrivateRoute>} />
-            <Route path="/roulette" element={<PrivateRoute><Roulette /></PrivateRoute>} />
-            <Route path="/withdraw/payment-methods" element={<PrivateRoute><PaymentMethods /></PrivateRoute>} />
+            {/* Super Admin - Full Width */}
+            <Route path="/super-admin" element={<PrivateRoute><SuperAdmin /></PrivateRoute>} />
+            <Route path="/admin" element={<AdminPortal />} />
+            
+            {/* Mobile Layout Routes */}
+            <Route path="*" element={
+              <MobileLayout>
+                <Routes>
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/register" element={<Register />} />
+                  <Route path="/activity" element={<PrivateRoute><Activity /></PrivateRoute>} />
+                  <Route path="/" element={<PrivateRoute><Home /></PrivateRoute>} />
+                  <Route path="/game/:type" element={<PrivateRoute><GamePage /></PrivateRoute>} />
+                  <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
+                  <Route path="/wallet" element={<PrivateRoute><Wallet /></PrivateRoute>} />
+                  <Route path="/deposit" element={<PrivateRoute><Deposit /></PrivateRoute>} />
+                  <Route path="/withdraw" element={<PrivateRoute><Withdraw /></PrivateRoute>} />
+                  <Route path="/withdraw/add-bank" element={<PrivateRoute><AddBankCard /></PrivateRoute>} />
+                  <Route path="/withdraw/add-upi" element={<PrivateRoute><AddUPI /></PrivateRoute>} />
+                  <Route path="/withdraw/add-usdt" element={<PrivateRoute><AddUSDT /></PrivateRoute>} />
+                  <Route path="/history/:type" element={<PrivateRoute><History /></PrivateRoute>} />
+                  <Route path="/promotion" element={<PrivateRoute><Promotion /></PrivateRoute>} />
+                  <Route path="/settings" element={<PrivateRoute><Settings /></PrivateRoute>} />
+                  <Route path="/language" element={<PrivateRoute><Language /></PrivateRoute>} />
+                  <Route path="/gift" element={<PrivateRoute><Gift /></PrivateRoute>} />
+                  <Route path="/notifications" element={<PrivateRoute><Notifications /></PrivateRoute>} />
+                  <Route path="/about" element={<PrivateRoute><About /></PrivateRoute>} />
+                  <Route path="/about/confidentiality" element={<PrivateRoute><Confidentiality /></PrivateRoute>} />
+                  <Route path="/about/risk-disclosure" element={<PrivateRoute><RiskDisclosure /></PrivateRoute>} />
+                  <Route path="/announcements" element={<PrivateRoute><Announcements /></PrivateRoute>} />
+                  <Route path="/feedback" element={<PrivateRoute><Feedback /></PrivateRoute>} />
+                  <Route path="/customer-service" element={<PrivateRoute><CustomerService /></PrivateRoute>} />
+                  <Route path="/game-statistics" element={<PrivateRoute><GameStatistics /></PrivateRoute>} />
+                  <Route path="/vip" element={<PrivateRoute><VIP /></PrivateRoute>} />
+                  <Route path="/mines" element={<PrivateRoute><Mines /></PrivateRoute>} />
+                  <Route path="/roulette" element={<PrivateRoute><Roulette /></PrivateRoute>} />
+                  <Route path="/withdraw/payment-methods" element={<PrivateRoute><PaymentMethods /></PrivateRoute>} />
+                </Routes>
+              </MobileLayout>
+            } />
           </Routes>
         </BrowserRouter>
         <Toaster position="top-center" richColors />

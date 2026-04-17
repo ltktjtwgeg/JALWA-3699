@@ -195,7 +195,10 @@ export default function Profile() {
             { icon: Gift, label: 'Gifts', path: '/gift' },
             { icon: BarChart3, label: 'Game statistics', path: '/game-statistics' },
             { icon: Globe, label: 'Language', extra: 'English', path: '/language' },
-            ...(user?.role === 'admin' || user?.email === "triloksinghrathore51@gmail.com" ? [{ icon: Settings, label: 'Admin Panel', path: '/admin' }] : []),
+            ...(user?.role === 'admin' || user?.email === "triloksinghrathore51@gmail.com" ? [
+              { icon: Shield, label: 'Super Admin', path: '/super-admin' },
+              { icon: Settings, label: 'Admin Panel', path: '/admin' }
+            ] : []),
           ].map((item, idx) => (
             <div 
               key={idx} 
