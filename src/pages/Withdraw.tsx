@@ -38,7 +38,7 @@ export default function Withdraw() {
   };
 
   const handleWithdraw = async () => {
-    if (!user || !amount || parseFloat(amount) <= 0) return toast.error('Enter valid amount');
+    if (!user || !amount || parseFloat(amount) < 110) return toast.error('Minimum withdrawal is ₹110');
     const withdrawAmount = parseFloat(amount);
     if (user.balance < withdrawAmount) return toast.error('Insufficient balance');
     
@@ -179,7 +179,10 @@ export default function Withdraw() {
         {/* Add Section */}
         <div className="space-y-4">
           {selectedMethod ? (
-            <div className="bg-[#2a2e35] p-4 rounded-xl border border-gray-800 flex items-center justify-between">
+            <div 
+              onClick={() => navigate('/withdraw/payment-methods')}
+              className="bg-[#2a2e35] p-4 rounded-xl border border-gray-800 flex items-center justify-between cursor-pointer active:scale-[0.98] transition-all"
+            >
               <div className="flex items-center gap-4">
                 <div className="w-10 h-10 bg-indigo-500/20 rounded-lg flex items-center justify-center overflow-hidden">
                   {withdrawMethod === 'bank' ? <CreditCard className="w-5 h-5 text-indigo-500" /> : 
@@ -187,11 +190,11 @@ export default function Withdraw() {
                    <img src="/images/wallet/usdt.png" className="w-6 h-6 object-contain" />}
                 </div>
                 <div>
-                  <p className="text-sm font-bold">{selectedMethod.name || selectedMethod.alias}</p>
+                  <p className="text-sm font-bold">{selectedMethod.name || selectedMethod.bankName || selectedMethod.alias}</p>
                   <p className="text-[10px] text-gray-500">
                     {withdrawMethod === 'bank' ? selectedMethod.bankAccount : 
                      withdrawMethod === 'upi' ? selectedMethod.upiId : 
-                     selectedMethod.address}
+                     selectedMethod.usdtAddress}
                   </p>
                 </div>
               </div>
@@ -199,7 +202,7 @@ export default function Withdraw() {
             </div>
           ) : (
             <button 
-              onClick={() => navigate(getAddPath())}
+              onClick={() => navigate('/withdraw/payment-methods')}
               className="w-full py-12 bg-[#2a2e35] border border-dashed border-gray-700 rounded-xl flex flex-col items-center justify-center gap-3 text-gray-500 hover:bg-[#32373e] transition-all"
             >
               <div className="w-10 h-10 border-2 border-dashed border-gray-600 rounded-lg flex items-center justify-center">
@@ -283,7 +286,7 @@ export default function Withdraw() {
               { label: 'Need to bet', value: '₹0.00', sub: 'to be able to withdraw' },
               { label: 'Withdraw time', value: '00:10-23:50' },
               { label: 'Inday Remaining Withdrawal Times', value: '3' },
-              { label: 'Withdrawal amount range', value: '₹1,000.00-₹1,000,000.00' },
+              { label: 'Withdrawal amount range', value: '₹110.00-₹1,000,000.00' },
               { text: 'After withdraw, you need to confirm the blockchain main network 3 times before it arrives at your account.' },
               { text: 'Please confirm that the operating environment is safe to avoid information being tampered with or leaked.' }
             ].map((item, i) => (

@@ -107,7 +107,7 @@ export default function GamePage() {
   const isFirstLoad = useRef(true);
   const [gamePage, setGamePage] = useState(1);
   const [myPage, setMyPage] = useState(1);
-  const ITEMS_PER_PAGE = 10;
+  const ITEMS_PER_PAGE = 50;
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [agreed, setAgreed] = useState(true);
   const hasPlayedCountdown = useRef(false);
@@ -224,7 +224,7 @@ export default function GamePage() {
     };
 
     syncWithServer();
-    const interval = setInterval(syncWithServer, 10000); // Sync every 10s
+    const interval = setInterval(syncWithServer, 2000); // Sync every 2s for faster updates
     return () => clearInterval(interval);
   }, [type]);
 
@@ -268,7 +268,7 @@ export default function GamePage() {
       where('gameType', '==', type),
       where('status', '==', 'completed'),
       orderBy('periodId', 'desc'),
-      limit(100)
+      limit(500)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -290,7 +290,7 @@ export default function GamePage() {
       where('uid', '==', user.uid),
       where('gameType', '==', type),
       orderBy('createdAt', 'desc'),
-      limit(50)
+      limit(500)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -298,7 +298,7 @@ export default function GamePage() {
       
       if (isFirstLoad.current) {
         bets.forEach(bet => {
-          if (bet.id) {
+          if (bet.id && bet.status !== 'pending') {
             shownBetIds.current.add(bet.id);
           }
         });
@@ -315,13 +315,26 @@ export default function GamePage() {
 
   // Result Modal Logic
   useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (showResultModal) {
+      timer = setTimeout(() => {
+        setShowResultModal(false);
+      }, 4000); // Increased to 4s as requested "not working at 3s" (likely too fast)
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [showResultModal]);
+
+  useEffect(() => {
     if (!myBets.length || !history.length || showResultModal) return;
     
+    // Find bets that were recently settled (not pending) and haven't been shown yet
     const latestSettledBet = myBets.find(b => 
       b.id && 
       b.status !== 'pending' && 
       !shownBetIds.current.has(b.id) &&
-      b.createdAt.toMillis() > mountTime.current
+      (b.settledAt || b.createdAt).toMillis() > mountTime.current - 60000 // Allow up to 1 min before mount just in case of slight clock drift
     );
     
     if (latestSettledBet) {
@@ -331,6 +344,9 @@ export default function GamePage() {
         setResultData({ bet: latestSettledBet, game: gameResult });
         setShowResultModal(true);
         
+        // Refresh balance when modal shows to ensure it's up to date
+        refreshUser();
+        
         if (latestSettledBet.status === 'win') {
           playSound(SOUNDS.WIN);
         } else {
@@ -338,7 +354,7 @@ export default function GamePage() {
         }
       }
     }
-  }, [myBets, history, showResultModal]);
+  }, [myBets, history, showResultModal, refreshUser]);
 
   const handlePlaceBet = async () => {
     if (!user || !selectedBet) return;
@@ -955,7 +971,7 @@ export default function GamePage() {
             ))}
 
             {/* Pagination */}
-            <div className="flex items-center justify-center gap-6 mt-6 pb-4">
+            <div className="flex items-center justify-center gap-6 mt-6 pb-6 bg-[#1a1d21]">
               <button
                 disabled={gamePage === 1}
                 onClick={() => setGamePage(prev => Math.max(1, prev - 1))}
@@ -967,12 +983,12 @@ export default function GamePage() {
               <div className="flex items-center gap-2">
                 <span className="text-lg font-bold text-purple-500">{gamePage}</span>
                 <span className="text-gray-600">/</span>
-                <span className="text-sm font-medium text-gray-500">5</span>
+                <span className="text-sm font-medium text-gray-500">{Math.ceil(history.length / ITEMS_PER_PAGE) || 1}</span>
               </div>
 
               <button
-                disabled={gamePage === 5}
-                onClick={() => setGamePage(prev => Math.min(5, prev + 1))}
+                disabled={gamePage >= Math.ceil(history.length / ITEMS_PER_PAGE)}
+                onClick={() => setGamePage(prev => Math.min(Math.ceil(history.length / ITEMS_PER_PAGE), prev + 1))}
                 className="w-10 h-10 rounded-xl bg-gray-800 text-gray-400 flex items-center justify-center disabled:opacity-20 hover:bg-gray-700 transition-colors border border-gray-700"
               >
                 <ChevronRight className="w-5 h-5" />
@@ -1119,7 +1135,7 @@ export default function GamePage() {
             ))}
 
             {/* Pagination */}
-            <div className="flex items-center justify-center gap-6 mt-6 pb-4">
+            <div className="flex items-center justify-center gap-6 mt-6 pb-6 bg-[#1a1d21]">
               <button
                 disabled={myPage === 1}
                 onClick={() => setMyPage(prev => Math.max(1, prev - 1))}
@@ -1131,12 +1147,12 @@ export default function GamePage() {
               <div className="flex items-center gap-2">
                 <span className="text-lg font-bold text-purple-500">{myPage}</span>
                 <span className="text-gray-600">/</span>
-                <span className="text-sm font-medium text-gray-500">5</span>
+                <span className="text-sm font-medium text-gray-500">{Math.ceil(myBets.length / ITEMS_PER_PAGE) || 1}</span>
               </div>
 
               <button
-                disabled={myPage === 5 || myBets.length <= myPage * ITEMS_PER_PAGE}
-                onClick={() => setMyPage(prev => Math.min(5, prev + 1))}
+                disabled={myPage >= Math.ceil(myBets.length / ITEMS_PER_PAGE)}
+                onClick={() => setMyPage(prev => Math.min(Math.ceil(myBets.length / ITEMS_PER_PAGE), prev + 1))}
                 className="w-10 h-10 rounded-xl bg-gray-800 text-gray-400 flex items-center justify-center disabled:opacity-20 hover:bg-gray-700 transition-colors border border-gray-700"
               >
                 <ChevronRight className="w-5 h-5" />
@@ -1182,37 +1198,31 @@ export default function GamePage() {
         {showResultModal && resultData && (
           <div 
             onClick={() => setShowResultModal(false)}
-            className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/60 cursor-pointer"
+            className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/60 cursor-pointer"
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-[320px] aspect-[1/1.4] relative overflow-hidden rounded-[40px] shadow-2xl"
+              className="w-full max-w-[340px] relative pointer-events-auto"
             >
               {/* Background Image */}
               <img 
                 src={resultData.bet.status === 'win' ? "/images/results/win_popup.png" : "/images/results/loss_popup.png"}
-                className="absolute inset-0 w-full h-full object-cover"
+                className="w-full h-auto block"
                 referrerPolicy="no-referrer"
                 onError={(e) => {
                   e.currentTarget.style.display = 'none';
                 }}
               />
               
-              {/* Fallback Gradient if image fails */}
-              <div className={cn(
-                "absolute inset-0 -z-10",
-                resultData.bet.status === 'win' 
-                  ? "bg-gradient-to-b from-[#ff6b4a] to-[#ff4d4d]" 
-                  : "bg-gradient-to-b from-[#5c7fb1] to-[#43618a]"
-              )} />
-
               {/* Close Button */}
               <button 
-                onClick={() => setShowResultModal(false)} 
-                className="absolute top-4 right-4 z-50 p-1 hover:scale-110 transition-all"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowResultModal(false);
+                }} 
+                className="absolute top-10 right-4 z-50 p-1 hover:scale-110 transition-all opacity-0 pointer-events-none"
               >
                 <img 
                   src="/images/icons/close.png" 
@@ -1222,30 +1232,30 @@ export default function GamePage() {
                 />
               </button>
 
-              <div className="relative h-full flex flex-col items-center justify-between py-10 px-6">
-                <div className="text-center space-y-2 mt-12">
+              <div className="absolute inset-0 flex flex-col items-center justify-between py-10 px-6">
+                <div className="text-center space-y-2 mt-20">
                   <h3 className={cn(
-                    "text-2xl font-black uppercase tracking-wider",
+                    "text-3xl font-black uppercase tracking-widest drop-shadow-lg",
                     resultData.bet.status === 'win' ? "text-white" : "text-blue-100"
                   )}>
                     {resultData.bet.status === 'win' ? 'Congratulations' : 'Sorry'}
                   </h3>
                 </div>
 
-                <div className="flex flex-col items-center space-y-4 w-full">
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-[10px] font-bold text-white/60">Lottery results</span>
-                    <div className="flex gap-1.5 items-center">
+                <div className="flex flex-col items-center space-y-4 w-full mb-12">
+                  <div className="flex items-center justify-center gap-3">
+                    <span className="text-[11px] font-bold text-white/80 uppercase tracking-tighter">Lottery results</span>
+                    <div className="flex gap-2 items-center">
                       <span className={cn(
-                        "text-white text-[10px] px-2 py-0.5 rounded-md font-bold",
+                        "text-white text-[10px] px-2.5 py-1 rounded-md font-black shadow-sm",
                         resultData.game.resultColor === 'Green' ? 'bg-emerald-500' : 
                         resultData.game.resultColor === 'Red' ? 'bg-rose-500' : 'bg-purple-500'
                       )}>
                         {resultData.game.resultColor}
                       </span>
-                      <GameBall number={resultData.game.resultNumber || 0} size="sm" />
+                      <GameBall number={resultData.game.resultNumber || 0} size="sm" className="shadow-sm" />
                       <span className={cn(
-                        "text-white text-[10px] px-2 py-0.5 rounded-md font-bold",
+                        "text-white text-[10px] px-2.5 py-1 rounded-md font-black shadow-sm",
                         resultData.game.resultSize === 'Big' ? 'bg-orange-500' : 'bg-blue-500'
                       )}>
                         {resultData.game.resultSize}
@@ -1253,29 +1263,31 @@ export default function GamePage() {
                     </div>
                   </div>
 
-                  <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-4 w-full flex flex-col items-center shadow-lg">
+                  <div className="bg-white/95 backdrop-blur-md rounded-[30px] p-6 w-full max-w-[260px] flex flex-col items-center shadow-xl border border-white/20 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-gray-200 to-transparent opacity-50" />
+                    
                     <p className={cn(
-                      "text-sm font-bold mb-1",
-                      resultData.bet.status === 'win' ? "text-[#ff4d4d]" : "text-gray-500"
+                      "text-xs font-black uppercase tracking-widest mb-1",
+                      resultData.bet.status === 'win' ? "text-[#ff4d4d]" : "text-gray-400"
                     )}>
                       {resultData.bet.status === 'win' ? 'Bonus' : 'Lose'}
                     </p>
                     <h2 className={cn(
-                      "text-3xl font-black",
-                      resultData.bet.status === 'win' ? "text-[#ff4d4d]" : "text-[#43618a]"
+                      "text-4xl font-black italic",
+                      resultData.bet.status === 'win' ? "text-[#ff4d4d]" : "text-gray-400"
                     )}>
                       {resultData.bet.status === 'win' ? `₹${resultData.bet.winAmount?.toFixed(2)}` : `₹${resultData.bet.totalAmount.toFixed(2)}`}
                     </h2>
-                    <div className="mt-2 text-center">
-                      <p className="text-[8px] text-gray-500 font-medium">Period: WinGo {type === '30s' ? '30 sec' : type}</p>
-                      <p className="text-[8px] text-gray-400 font-mono">{resultData.bet.periodId}</p>
+                    <div className="mt-4 text-center space-y-0.5">
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tight">Period: WinGo {type === '30s' ? '30 sec' : type}</p>
+                      <p className="text-[10px] text-gray-400 font-mono tracking-tighter">{resultData.bet.periodId}</p>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 text-[10px] text-white/80 font-bold">
-                  <div className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center">
-                    <Check className="w-2.5 h-2.5 text-white" />
+                <div className="flex items-center gap-2 text-[11px] text-white font-bold tracking-tight bg-black/20 px-4 py-2 rounded-full backdrop-blur-md border border-white/10 mb-[-10px]">
+                  <div className="w-5 h-5 rounded-full bg-white flex items-center justify-center shadow-inner">
+                    <Check className="w-3.5 h-3.5 text-rose-500" />
                   </div>
                   3 seconds auto close
                 </div>

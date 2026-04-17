@@ -55,7 +55,6 @@ export default function GameStatistics() {
         startDate.setDate(startDate.getDate() - 1);
         const endDate = new Date(startDate);
         endDate.setHours(23, 59, 59, 999);
-        // Special case for yesterday range
       } else if (activeTab === 'This week') {
         const day = startDate.getDay();
         startDate.setDate(startDate.getDate() - day);
@@ -63,22 +62,53 @@ export default function GameStatistics() {
         startDate.setDate(1);
       }
 
-      const q = query(
+      // Fetch bets (Wingo)
+      const betsQ = query(
         collection(db, 'bets'),
         where('uid', '==', auth.currentUser.uid),
         where('createdAt', '>=', Timestamp.fromDate(startDate))
       );
 
-      const querySnapshot = await getDocs(q);
+      // Fetch transactions (Mines, Roulette, etc.)
+      const transQ = query(
+        collection(db, 'transactions'),
+        where('uid', '==', auth.currentUser.uid),
+        where('createdAt', '>=', Timestamp.fromDate(startDate)),
+        where('type', 'in', ['mines_win', 'mines_loss', 'roulette_win', 'roulette_loss'])
+      );
+
+      const [betsSnap, transSnap] = await Promise.all([
+        getDocs(betsQ),
+        getDocs(transQ)
+      ]);
+
       const newStats = JSON.parse(JSON.stringify(initialStats));
 
-      querySnapshot.forEach((doc) => {
+      // Process Wingo bets
+      betsSnap.forEach((doc) => {
         const data = doc.data();
-        // For now, all bets in this app are 'lottery'
         newStats.lottery.totalBet += data.totalAmount || 0;
         newStats.lottery.count += 1;
         if (data.status === 'win') {
           newStats.lottery.winningAmount += data.winAmount || 0;
+        }
+      });
+
+      // Process Game transactions
+      transSnap.forEach((doc) => {
+        const data = doc.data();
+        if (data.type.includes('mines')) {
+          newStats.slot.totalBet += data.type === 'mines_loss' ? data.amount : (data.amount / 2); // Approximation for bet
+          newStats.slot.count += 1;
+          if (data.type === 'mines_win') {
+            newStats.slot.winningAmount += data.amount;
+          }
+        } else if (data.type.includes('roulette')) {
+          newStats.lottery.totalBet += data.type === 'roulette_loss' ? data.amount : (data.amount / 5); // Approximation
+          newStats.lottery.count += 1;
+          if (data.type === 'roulette_win') {
+            newStats.lottery.winningAmount += data.amount;
+          }
         }
       });
 

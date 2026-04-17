@@ -1,33 +1,41 @@
-HOSTINGER DEPLOYMENT GUIDE FOR YOUR GAME
+HOSTINGER DEPLOYMENT GUIDE FOR JALWA 369
 ==========================================
 
-1. PREREQUISITES:
-   - Hostinger VPS or Node.js Hosting plan.
-   - Domain already purchased in Hostinger.
+Based on your screenshots, here is how you should configure your Hostinger panel:
 
-2. UPLOAD STEPS:
-   - Download the ZIP of this project.
-   - Upload all files to the 'public_html' or your app directory in Hostinger.
+1. BUILD & OUTPUT SETTINGS:
+   - Framework preset: Other
+   - Build command: npm run build
+   - Output directory: dist
+   - Entry file: dist/server.js  <-- IMPORTANT: I have updated the code to create this file.
 
-3. INSTALLATION (Via SSH):
-   cd /path/to/your/app
-   npm install
+2. ENVIRONMENT VARIABLES:
+   Go to the "Environment Variables" section and add these EXACT keys:
+   - DB_HOST: [Your MySQL Host from Hostinger - usually 'localhost' or an IP]
+   - DB_USER: u918090917_jalwa
+   - DB_PASS: Harsh@jalwa369
+   - DB_NAME: u918090917_jalwa
+   - NODE_ENV: production
+   - PORT: 3000
+   - GEMINI_API_KEY: [Your Key]
 
-4. BUILD FRONTEND:
-   npm run build
+3. DATABASE SETUP:
+   - In Hostinger Panel, go to "Databases" -> "MySQL Databases".
+   - Create a database named 'u918090917_jalwa'.
+   - Create a user named 'u918090917_jalwa' with password 'Harsh@jalwa369'.
+   - Import the 'schema.sql' file into your database using phpMyAdmin.
 
-5. START SERVER (Using PM2 for 24/7 uptime):
-   npm install -g pm2
-   pm2 start server.ts --name "my-game" --interpreter ./node_modules/.bin/tsx
-   pm2 save
+4. UPLOAD STEPS:
+   - Open your project folder.
+   - Run 'npm run build' locally or let Hostinger run it.
+   - If deploying via Git: Push your changes to GitHub and connect it to Hostinger.
+   - If deploying via ZIP: Ensure 'package.json' and 'server.ts' are in the ROOT of the ZIP.
 
-6. DOMAIN CONNECTION:
-   - In Hostinger Panel, go to Domains -> [Your Domain] -> DNS / Nameservers.
-   - Ensure the A record points to your Server IP.
-   - If using Node.js Hosting, use the "Setup Domain" option in the Node.js dashboard.
+5. DOMAIN CONNECTION:
+   - Go to "Domains" -> [Your Domain].
+   - If you see "A record" error, ensure it points to the IP shown in your Hosting plan details.
 
-7. ENVIRONMENT VARIABLES:
-   Make sure to set these in Hostinger:
-   - PORT=3000
-   - NODE_ENV=production
-   - GEMINI_API_KEY= (Your Key)
+TROUBLESHOOTING "Build Failed":
+- If the build fails again, check the "Build Logs" in Hostinger.
+- Ensure 'node_modules' is NOT in your ZIP or Git (the server will install it).
+- Make sure 'firebase-applet-config.json' is included in your upload.

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Landmark, User, CreditCard, Smartphone, Mail, Search, Info } from 'lucide-react';
+import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { db, auth } from '../firebase';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -34,7 +36,7 @@ export default function AddBankCard() {
     bank.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!formData.bankName || !formData.recipientName || !formData.accountNumber || !formData.ifscCode) {
       toast.error('Please fill in all required fields');
       return;
@@ -43,8 +45,35 @@ export default function AddBankCard() {
       toast.error('Phone number must be exactly 10 digits');
       return;
     }
-    toast.success('Bank card added successfully');
-    navigate(-1);
+
+    try {
+      const userRef = doc(db, 'users', auth.currentUser?.uid!);
+      const newMethod = {
+        id: Math.random().toString(36).substr(2, 9),
+        type: 'bank' as const,
+        name: formData.recipientName,
+        bankName: formData.bankName,
+        bankAccount: formData.accountNumber,
+        ifsc: formData.ifscCode,
+        phone: formData.phoneNumber,
+        email: formData.email,
+        createdAt: serverTimestamp()
+      };
+
+      const userDoc = await getDoc(userRef);
+      if (userDoc.exists()) {
+        const currentMethods = userDoc.data().paymentMethods || [];
+        await updateDoc(userRef, {
+          paymentMethods: [...currentMethods, newMethod]
+        });
+      }
+
+      toast.success('Bank card added successfully');
+      navigate('/withdraw/payment-methods');
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to add bank card');
+    }
   };
 
   if (showBankList) {

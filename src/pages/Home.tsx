@@ -33,6 +33,8 @@ export default function Home() {
     { id: '3m', name: 'Wingo 3M', time: '3 Min', color: 'bg-rose-700', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo3m/200/200', category: 'lottery' },
     { id: '5m', name: 'Wingo 5M', time: '5 Min', color: 'bg-rose-800', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo5m/200/200', category: 'lottery' },
     { id: 'mines', name: 'Mines', type: 'mines', color: 'bg-indigo-600', image: 'https://cdn-icons-png.flaticon.com/512/3593/3593441.png', fallback: 'https://picsum.photos/seed/mines/200/200', category: 'mini' },
+    { id: 'wingo', name: 'WinGo', color: 'bg-orange-600', image: 'https://cdn-icons-png.flaticon.com/512/2858/2858908.png', fallback: 'https://picsum.photos/seed/bingo/200/200', category: 'popular' },
+    { id: 'roulette', name: 'Roulette', color: 'bg-emerald-600', image: 'https://cdn-icons-png.flaticon.com/512/10512/10512739.png', fallback: 'https://picsum.photos/seed/roulette/200/200', category: 'popular' },
   ];
 
   interface Category {
@@ -50,10 +52,11 @@ export default function Home() {
 
   const lotteryGames = [
     { id: '1m', name: 'Win Go', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/wingo/200/200', fallback: 'https://picsum.photos/seed/wingo/200/200' },
+    { id: 'wingo', name: 'WinGo', color: 'from-[#f97316] to-[#ec4899]', image: 'https://cdn-icons-png.flaticon.com/512/2858/2858908.png', fallback: 'https://picsum.photos/seed/bingo/200/200' },
+    { id: 'roulette', name: 'Roulette', color: 'from-[#10b981] to-[#059669]', image: 'https://cdn-icons-png.flaticon.com/512/10512/10512739.png', fallback: 'https://picsum.photos/seed/roulette/200/200' },
     { id: 'k3', name: 'K3', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/k3/200/200', fallback: 'https://picsum.photos/seed/k3/200/200', isUpcoming: true },
     { id: '5d', name: '5D', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/5d/200/200', fallback: 'https://picsum.photos/seed/5d/200/200', isUpcoming: true },
     { id: 'trx', name: 'Trx Wingo', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/trx/200/200', fallback: 'https://picsum.photos/seed/trx/200/200', isUpcoming: true },
-    { id: 'moto', name: 'Moto Racing', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/moto/200/200', fallback: 'https://picsum.photos/seed/moto/200/200', isUpcoming: true },
   ];
 
   const filteredGames = activeCategory === 'lottery' 
@@ -63,6 +66,12 @@ export default function Home() {
   const handleGameClick = (game: any) => {
     if (game.id === 'mines') {
        navigate('/mines');
+    } else if (game.id === 'roulette') {
+       navigate('/roulette');
+    } else if (game.id === 'wingo') {
+       // Since it's WinGo, maybe it should go to a specific WinGo page? 
+       // For now, let's treat it as the 1m WinGo.
+       navigate('/game/1m');
     } else {
        navigate(`/game/${game.id_real || game.id}`);
     }

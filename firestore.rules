@@ -109,7 +109,7 @@ service cloud.firestore {
 
     function isValidTransaction(data) {
       return data.uid is string &&
-             data.type in ['deposit', 'withdraw', 'bet', 'win'] &&
+             data.type in ['deposit', 'withdraw', 'bet', 'win', 'mines_win', 'mines_loss', 'roulette_win', 'roulette_loss'] &&
              data.amount is number &&
              data.status in ['pending', 'completed', 'failed'] &&
              (data.createdAt == null || data.createdAt is timestamp);
@@ -185,7 +185,7 @@ service cloud.firestore {
     match /game_controls/{controlId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin();
-      allow update: if isAuthenticated() && (isAdmin() || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'usedInPeriod']) && request.resource.data.status == 'completed'));
+      allow update: if isAuthenticated() && (isAdmin() || (request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'usedInPeriod', 'usedBy', 'usedAt']) && (request.resource.data.status == 'completed' || request.resource.data.status == 'used')));
       allow delete: if isAdmin();
     }
 

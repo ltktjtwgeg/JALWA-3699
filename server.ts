@@ -68,13 +68,16 @@ async function startServer() {
           for (const bet of bets) {
             let isWin = false;
             let multiplier = 0;
-            // (Same logic as before...)
-            if (bet.selection === 'Green' && result.resultColor.includes('Green')) { isWin = true; multiplier = result.resultNumber === 5 ? 1.5 : 2; }
-            else if (bet.selection === 'Red' && result.resultColor.includes('Red')) { isWin = true; multiplier = result.resultNumber === 0 ? 1.5 : 2; }
-            else if (bet.selection === 'Violet' && result.resultColor.includes('Violet')) { isWin = true; multiplier = 4.5; }
-            else if (bet.selection === 'Big' && result.resultSize === 'Big') { isWin = true; multiplier = 2; }
-            else if (bet.selection === 'Small' && result.resultSize === 'Small') { isWin = true; multiplier = 2; }
-            else if (!isNaN(Number(bet.selection)) && Number(bet.selection) === result.resultNumber) { isWin = true; multiplier = 9; }
+            const resNum = result.resultNumber;
+            const resColor = result.resultColor;
+            const resSize = result.resultSize;
+
+            if (bet.selection === 'Green' && resColor.includes('Green')) { isWin = true; multiplier = resNum === 5 ? 1.5 : 2; }
+            else if (bet.selection === 'Red' && resColor.includes('Red')) { isWin = true; multiplier = resNum === 0 ? 1.5 : 2; }
+            else if (bet.selection === 'Violet' && resColor.includes('Violet')) { isWin = true; multiplier = 4.5; }
+            else if (bet.selection === 'Big' && resSize === 'Big') { isWin = true; multiplier = 2; }
+            else if (bet.selection === 'Small' && resSize === 'Small') { isWin = true; multiplier = 2; }
+            else if (!isNaN(Number(bet.selection)) && Number(bet.selection) === resNum) { isWin = true; multiplier = 9; }
 
             if (isWin) {
               const winAmount = bet.amount * multiplier;
@@ -87,25 +90,47 @@ async function startServer() {
             }
           }
         } else {
-          // Firebase Settlement (Existing logic)
-          const betsSnapshot = await dbInstance.collection('bets').where('gameType', '==', gameType).where('periodId', '==', periodId).where('status', '==', 'pending').get();
+          // Firebase Settlement
+          const betsSnapshot = await dbInstance.collection('bets')
+            .where('gameType', '==', gameType)
+            .where('periodId', '==', periodId)
+            .where('status', '==', 'pending')
+            .get();
+
           for (const betDoc of betsSnapshot.docs) {
             const bet = betDoc.data();
             let isWin = false;
             let multiplier = 0;
-            if (bet.selection === 'Green' && result.resultColor.includes('Green')) { isWin = true; multiplier = result.resultNumber === 5 ? 1.5 : 2; }
-            else if (bet.selection === 'Red' && result.resultColor.includes('Red')) { isWin = true; multiplier = result.resultNumber === 0 ? 1.5 : 2; }
-            else if (bet.selection === 'Violet' && result.resultColor.includes('Violet')) { isWin = true; multiplier = 4.5; }
-            else if (bet.selection === 'Big' && result.resultSize === 'Big') { isWin = true; multiplier = 2; }
-            else if (bet.selection === 'Small' && result.resultSize === 'Small') { isWin = true; multiplier = 2; }
-            else if (!isNaN(Number(bet.selection)) && Number(bet.selection) === result.resultNumber) { isWin = true; multiplier = 9; }
+            const resNum = result.resultNumber;
+            const resColor = result.resultColor;
+            const resSize = result.resultSize;
+
+            if (bet.selection === 'Green' && resColor.includes('Green')) { isWin = true; multiplier = resNum === 5 ? 1.5 : 2; }
+            else if (bet.selection === 'Red' && resColor.includes('Red')) { isWin = true; multiplier = resNum === 0 ? 1.5 : 2; }
+            else if (bet.selection === 'Violet' && resColor.includes('Violet')) { isWin = true; multiplier = 4.5; }
+            else if (bet.selection === 'Big' && resSize === 'Big') { isWin = true; multiplier = 2; }
+            else if (bet.selection === 'Small' && resSize === 'Small') { isWin = true; multiplier = 2; }
+            else if (!isNaN(Number(bet.selection)) && Number(bet.selection) === resNum) { isWin = true; multiplier = 9; }
 
             if (isWin) {
               const winAmount = bet.netAmount * multiplier;
               await dbInstance.runTransaction(async (t) => {
-                t.update(dbInstance.collection('users').doc(bet.uid), { balance: admin.firestore.FieldValue.increment(winAmount) });
+                const userRef = dbInstance.collection('users').doc(bet.uid);
+                const userSnap = await t.get(userRef);
+                if (userSnap.exists) {
+                  const userData = userSnap.data();
+                  const currentBalance = userData?.balance || 0;
+                  t.update(userRef, { balance: currentBalance + winAmount });
+                }
                 t.update(betDoc.ref, { status: 'win', winAmount });
-                t.set(dbInstance.collection('transactions').doc(), { uid: bet.uid, type: 'win', amount: winAmount, status: 'completed', description: `Win on ${bet.selection}`, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+                t.set(dbInstance.collection('transactions').doc(), { 
+                  uid: bet.uid, 
+                  type: 'win', 
+                  amount: winAmount, 
+                  status: 'completed', 
+                  description: `Win on ${bet.selection} (Period: ${periodId})`, 
+                  createdAt: admin.firestore.FieldValue.serverTimestamp() 
+                });
               });
             } else {
               await betDoc.ref.update({ status: 'lost', winAmount: 0 });
@@ -120,11 +145,16 @@ async function startServer() {
       try {
         const now = Date.now();
         for (const [type, duration] of Object.entries(GAME_MODES)) {
-          const durationMs = duration * 1000;
+          const durationSeconds = duration as number;
+          const durationMs = durationSeconds * 1000;
           const roundIndex = Math.floor(now / durationMs);
           const startTime = roundIndex * durationMs;
           const endTime = startTime + durationMs;
-          const roundId = `${new Date(startTime).toISOString().slice(0, 10).replace(/-/g, '')}${roundIndex}`;
+          
+          const date = new Date(startTime);
+          const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+          const roundId = `${dateStr}${roundIndex}`;
+          
           const remainingTime = Math.max(0, Math.floor((endTime - now) / 1000));
 
           if (isMysqlEnabled) {
@@ -139,31 +169,54 @@ async function startServer() {
                 await query('UPDATE game_rounds SET result_number = ?, result_color = ?, result_size = ? WHERE id = ?', 
                   [res.resultNumber, res.resultColor, res.resultSize, round.id]);
               }
-              if (remainingTime === 0 && round.status === 'running') {
+              if (remainingTime <= 0 && round.status === 'running') {
                 await query('UPDATE game_rounds SET status = "completed" WHERE id = ?', [round.id]);
-                if (round.result_number !== null) await settleBets(type, roundId, { resultNumber: round.result_number, resultColor: round.result_color, resultSize: round.result_size });
+                if (round.result_number !== null) {
+                  await settleBets(type, roundId, { 
+                    resultNumber: round.result_number, 
+                    resultColor: round.result_color, 
+                    resultSize: round.result_size 
+                  });
+                }
               }
             }
           } else {
-            const roundRef = dbInstance.collection('game_rounds').doc(`${type}_${roundId}`);
+            const roundRef = dbInstance.collection('games').doc(`${type}_${roundId}`);
             const doc = await roundRef.get();
             if (!doc.exists) {
-              await roundRef.set({ roundId, gameType: type, startTime: admin.firestore.Timestamp.fromMillis(startTime), endTime: admin.firestore.Timestamp.fromMillis(endTime), status: 'running', createdAt: admin.firestore.FieldValue.serverTimestamp() });
+              await roundRef.set({ 
+                periodId: roundId, 
+                gameType: type, 
+                startTime: admin.firestore.Timestamp.fromMillis(startTime), 
+                endTime: admin.firestore.Timestamp.fromMillis(endTime), 
+                status: 'running', 
+                createdAt: admin.firestore.FieldValue.serverTimestamp() 
+              });
             } else {
               const data = doc.data();
-              if (remainingTime <= 5 && !data?.result && data?.status === 'running') {
+              if (remainingTime <= 5 && !data?.resultNumber && data?.status === 'running') {
                 const res = generateResult();
-                await roundRef.update({ result: res });
+                await roundRef.update({ 
+                  resultNumber: res.resultNumber,
+                  resultColor: res.resultColor,
+                  resultSize: res.resultSize
+                });
               }
-              if (remainingTime === 0 && data?.status === 'running') {
+              if (remainingTime <= 0 && data?.status === 'running') {
                 await roundRef.update({ status: 'completed' });
-                if (data?.result) await settleBets(type, roundId, data.result);
+                if (data?.resultNumber !== undefined) {
+                  await settleBets(type, roundId, { 
+                    resultNumber: data.resultNumber, 
+                    resultColor: data.resultColor, 
+                    resultSize: data.resultSize 
+                  });
+                }
               }
             }
           }
         }
       } catch (err) { console.error('Scheduler Error:', err); }
-    }, 1000);
+    }, 500);
 
     // API Endpoints
     app.get('/api/current-round/:gameType', async (req, res) => {

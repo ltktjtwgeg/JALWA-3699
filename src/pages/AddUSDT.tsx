@@ -4,23 +4,53 @@ import { ChevronLeft, Info, Globe, Tag } from 'lucide-react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 
+import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { db, auth } from '../firebase';
+
 export default function AddUSDT() {
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     network: 'TRC',
     address: '',
     alias: ''
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.address) {
       toast.error('Please enter USDT address');
       return;
     }
     
-    toast.success('USDT address added successfully');
-    navigate(-1);
+    setLoading(true);
+    try {
+      const userRef = doc(db, 'users', auth.currentUser?.uid!);
+      const newMethod = {
+        id: Math.random().toString(36).substr(2, 9),
+        type: 'usdt' as const,
+        alias: formData.alias || `USDT (${formData.network})`,
+        address: formData.address,
+        network: formData.network,
+        createdAt: serverTimestamp()
+      };
+
+      const userDoc = await getDoc(userRef);
+      if (userDoc.exists()) {
+        const currentMethods = userDoc.data().paymentMethods || [];
+        await updateDoc(userRef, {
+          paymentMethods: [...currentMethods, newMethod]
+        });
+      }
+
+      toast.success('USDT address added successfully');
+      navigate('/withdraw/payment-methods');
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to add USDT address');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

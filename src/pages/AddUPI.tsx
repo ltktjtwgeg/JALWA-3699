@@ -4,8 +4,12 @@ import { ChevronLeft, User, Smartphone, CreditCard, Info } from 'lucide-react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 
+import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { db, auth } from '../firebase';
+
 export default function AddUPI() {
   const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     upiName: '',
     phoneNumber: '',
@@ -13,7 +17,7 @@ export default function AddUPI() {
     confirmUpiId: ''
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.upiName || !formData.phoneNumber || !formData.upiId || !formData.confirmUpiId) {
       toast.error('Please fill all fields');
@@ -28,8 +32,34 @@ export default function AddUPI() {
       return;
     }
     
-    toast.success('UPI information added successfully');
-    navigate(-1);
+    setLoading(true);
+    try {
+      const userRef = doc(db, 'users', auth.currentUser?.uid!);
+      const newMethod = {
+        id: Math.random().toString(36).substr(2, 9),
+        type: 'upi' as const,
+        name: formData.upiName,
+        upiId: formData.upiId,
+        phone: formData.phoneNumber,
+        createdAt: serverTimestamp()
+      };
+
+      const userDoc = await getDoc(userRef);
+      if (userDoc.exists()) {
+        const currentMethods = userDoc.data().paymentMethods || [];
+        await updateDoc(userRef, {
+          paymentMethods: [...currentMethods, newMethod]
+        });
+      }
+
+      toast.success('UPI information added successfully');
+      navigate('/withdraw/payment-methods');
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to add UPI');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

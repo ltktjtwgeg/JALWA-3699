@@ -410,27 +410,41 @@ function DemoAccountSection({ demoUsers }: { demoUsers: User[] }) {
 function GameControlSection({ pendingControls }: { pendingControls: any[] }) {
   const [gameType, setGameType] = useState<string>('1m');
   const [target, setTarget] = useState<string>('Big');
+  const [controlType, setControlType] = useState<'wingo' | 'roulette' | 'mines'>('wingo');
+  const [rouletteTarget, setRouletteTarget] = useState<number>(0);
+  const [minesTarget, setMinesTarget] = useState<string>(''); // comma separated indices
+  const [targetUsername, setTargetUsername] = useState<string>('');
   const [loading, setLoading] = useState(false);
 
   const handleSetControl = async () => {
     setLoading(true);
     try {
       const data: any = {
-        gameType,
+        type: controlType,
         status: 'pending',
+        targetUsername: targetUsername.trim() || 'global',
         createdAt: serverTimestamp()
       };
 
-      if (['Big', 'Small'].includes(target)) {
-        data.targetSize = target;
-      } else {
-        data.targetNumber = parseInt(target);
+      if (controlType === 'wingo') {
+        data.gameType = gameType;
+        if (['Big', 'Small'].includes(target)) {
+          data.targetSize = target;
+        } else {
+          data.targetNumber = parseInt(target);
+        }
+      } else if (controlType === 'roulette') {
+        data.targetNumber = rouletteTarget;
+      } else if (controlType === 'mines') {
+        const indices = minesTarget.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+        if (indices.length === 0) throw new Error('Enter valid mine positions (0-24)');
+        data.targetMines = indices;
       }
 
       await addDoc(collection(db, 'game_controls'), data);
-      toast.success('Game control set for next round');
-    } catch (error) {
-      toast.error('Failed to set control');
+      toast.success('Game control set successfully');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to set control');
     } finally {
       setLoading(false);
     }
@@ -455,13 +469,13 @@ function GameControlSection({ pendingControls }: { pendingControls: any[] }) {
 
         <div className="space-y-4">
           <div>
-            <label className="text-xs text-gray-500 mb-2 block">Game Type</label>
-            <div className="grid grid-cols-4 gap-2">
-              {['30s', '1m', '3m', '5m'].map((t) => (
+            <label className="text-xs text-gray-500 mb-2 block">Game To Control</label>
+            <div className="grid grid-cols-3 gap-2">
+              {['wingo', 'roulette', 'mines'].map((t) => (
                 <button
                   key={t}
-                  onClick={() => setGameType(t)}
-                  className={`py-2 rounded-xl text-xs font-bold transition-all ${gameType === t ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-500'}`}
+                  onClick={() => setControlType(t as any)}
+                  className={`py-2 rounded-xl text-xs font-bold transition-all capitalize ${controlType === t ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-500'}`}
                 >
                   {t}
                 </button>
@@ -470,19 +484,80 @@ function GameControlSection({ pendingControls }: { pendingControls: any[] }) {
           </div>
 
           <div>
-            <label className="text-xs text-gray-500 mb-2 block">Target Result</label>
-            <div className="grid grid-cols-4 gap-2">
-              {['Big', 'Small', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTarget(t)}
-                  className={`py-2 rounded-xl text-xs font-bold transition-all ${target === t ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-500'}`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+            <label className="text-xs text-gray-500 mb-2 block">Target Username (Optional - leave empty for global)</label>
+            <input 
+              type="text"
+              value={targetUsername}
+              onChange={(e) => setTargetUsername(e.target.value)}
+              placeholder="e.g. admin"
+              className="w-full bg-[#1a1d21] border border-gray-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-purple-500"
+            />
           </div>
+
+          {controlType === 'wingo' && (
+            <>
+              <div>
+                <label className="text-xs text-gray-500 mb-2 block">Game Type</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {['30s', '1m', '3m', '5m'].map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setGameType(t)}
+                      className={`py-2 rounded-xl text-xs font-bold transition-all ${gameType === t ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-500'}`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-500 mb-2 block">Target Result</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {['Big', 'Small', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setTarget(t)}
+                      className={`py-2 rounded-xl text-xs font-bold transition-all ${target === t ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-500'}`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {controlType === 'roulette' && (
+            <div>
+              <label className="text-xs text-gray-500 mb-2 block">Target Number (0-12)</label>
+              <div className="grid grid-cols-7 gap-1">
+                {Array.from({length: 13}).map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setRouletteTarget(i)}
+                    className={`h-10 rounded-lg text-xs font-bold transition-all ${rouletteTarget === i ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-500'}`}
+                  >
+                    {i}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {controlType === 'mines' && (
+            <div>
+              <label className="text-xs text-gray-500 mb-2 block">Mine Positions (0-24, comma separated)</label>
+              <input 
+                type="text"
+                value={minesTarget}
+                onChange={(e) => setMinesTarget(e.target.value)}
+                placeholder="e.g. 1,5,10"
+                className="w-full bg-[#1a1d21] border border-gray-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-purple-500"
+              />
+              <p className="text-[10px] text-gray-600 mt-1">If user clicks any of these, they lose instantly.</p>
+            </div>
+          )}
 
           <button
             disabled={loading}
@@ -502,10 +577,11 @@ function GameControlSection({ pendingControls }: { pendingControls: any[] }) {
         {pendingControls.map((c) => (
           <div key={c.id} className="bg-[#1f2228] p-4 rounded-2xl border border-gray-800 flex items-center justify-between">
             <div>
-              <p className="font-bold text-sm">{c.gameType}</p>
+              <p className="font-bold text-sm uppercase text-white/90">{c.type || 'wingo'} - {c.gameType || ''}</p>
               <p className="text-xs text-purple-400 font-bold">
-                Target: {c.targetSize || c.targetNumber}
+                Target: {c.targetSize || c.targetNumber !== undefined ? c.targetNumber : c.targetMines?.join(',')}
               </p>
+              <p className="text-[10px] text-gray-500">Target User: {c.targetUsername || 'Global'}</p>
             </div>
             <button 
               onClick={() => handleDeleteControl(c.id)}

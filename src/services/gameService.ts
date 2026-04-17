@@ -12,7 +12,9 @@ import {
   writeBatch,
   setDoc,
   getDoc, 
-  runTransaction
+  runTransaction,
+  orderBy,
+  limit
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Game, Bet, GameType } from '../types';
@@ -47,8 +49,11 @@ export async function processGameResults(type: GameType) {
         // Check for admin control
         const controlQ = query(
           collection(db, 'game_controls'), 
+          where('status', '==', 'pending'),
+          where('type', '==', 'wingo'),
           where('gameType', '==', type),
-          where('status', '==', 'pending')
+          orderBy('createdAt', 'asc'),
+          limit(1)
         );
         const controlSnap = await getDocs(controlQ);
         
@@ -72,7 +77,8 @@ export async function processGameResults(type: GameType) {
           
           await updateDoc(doc(db, 'game_controls', controlDoc.id), { 
             status: 'completed', 
-            usedInPeriod: targetPeriodId 
+            usedInPeriod: targetPeriodId,
+            usedAt: serverTimestamp()
           });
         } else {
           // Use true randomness instead of deterministic pattern

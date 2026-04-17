@@ -168,9 +168,9 @@ export default function Deposit() {
           </div>
           <div className="grid grid-cols-2 gap-3">
             {[
-              { id: 'QR-WePay', range: '100 - 10K' },
-              { id: 'QR-Umoney', range: '100 - 10K' },
-              { id: 'QR-YayaPay', range: '100 - 50K' }
+              { id: 'QR-WePay', range: '110 - 10K' },
+              { id: 'QR-Umoney', range: '110 - 10K' },
+              { id: 'QR-YayaPay', range: '110 - 50K' }
             ].map((channel) => (
               <button
                 key={channel.id}
@@ -223,7 +223,7 @@ export default function Deposit() {
             </div>
             <input 
               type="number" 
-              placeholder="100.00 - 10,000.00"
+              placeholder="110.00 - 10,000.00"
               className="w-full bg-gray-800/50 border border-gray-700 rounded-2xl py-4 pl-12 pr-12 text-lg font-bold text-white outline-none focus:ring-2 focus:ring-purple-500"
               value={amount}
               onChange={(e) => {
@@ -249,7 +249,7 @@ export default function Deposit() {
             <ul className="space-y-3">
               {[
                 "If the transfer time is up, please fill out the deposit",
-                "The minimum deposit amount is ₹100.00",
+                "The minimum deposit amount is ₹110.00",
                 "Please follow the instructions carefully to avoid delays"
               ].map((inst, i) => (
                 <li key={i} className="flex items-start gap-3 text-[10px] text-gray-500 leading-relaxed">

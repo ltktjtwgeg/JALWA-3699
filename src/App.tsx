@@ -43,6 +43,8 @@ import CustomerService from './pages/CustomerService';
 import GameStatistics from './pages/GameStatistics';
 import VIP from './pages/VIP';
 import Mines from './pages/Mines';
+import Roulette from './pages/Roulette';
+import PaymentMethods from './pages/PaymentMethods';
 
 const AuthContext = createContext<{
   user: AppUser | null;
@@ -145,8 +147,8 @@ function GameManager() {
       }
     };
 
-    // const interval = setInterval(runManager, 1000);
-    // return () => clearInterval(interval);
+    const interval = setInterval(runManager, 1000);
+    return () => clearInterval(interval);
   }, [firebaseUser]);
 
   return null;
@@ -200,6 +202,8 @@ export default function App() {
             <Route path="/game-statistics" element={<PrivateRoute><GameStatistics /></PrivateRoute>} />
             <Route path="/vip" element={<PrivateRoute><VIP /></PrivateRoute>} />
             <Route path="/mines" element={<PrivateRoute><Mines /></PrivateRoute>} />
+            <Route path="/roulette" element={<PrivateRoute><Roulette /></PrivateRoute>} />
+            <Route path="/withdraw/payment-methods" element={<PrivateRoute><PaymentMethods /></PrivateRoute>} />
           </Routes>
         </BrowserRouter>
         <Toaster position="top-center" richColors />

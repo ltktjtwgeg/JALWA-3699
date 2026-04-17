@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "start": "tsx server.ts",
-    "build": "vite build",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=esm --outfile=dist/server.js --external:vite --external:firebase-admin",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
@@ -37,6 +37,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
+    "esbuild": "^0.28.0",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"

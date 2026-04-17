@@ -4,7 +4,7 @@ import { ChevronLeft, Wallet, Info, Bomb, Gem, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../App';
 import { db } from '../firebase';
-import { doc, updateDoc, increment, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, increment, collection, addDoc, serverTimestamp, query, where, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { formatCurrency, cn } from '../lib/utils';
 
@@ -43,19 +43,66 @@ export default function Mines() {
     }
 
     try {
-      // Deduct balance
-      await updateDoc(doc(db, 'users', user.uid), {
-        balance: increment(-betAmount)
+      // Check for Admin Control
+      let newMines: number[] = [];
+      
+      const controlQuery = query(
+        collection(db, 'game_controls'),
+        where('status', '==', 'pending'),
+        where('type', '==', 'mines'),
+        orderBy('createdAt', 'asc'),
+        limit(5)
+      );
+      
+      const controlSnap = await getDocs(controlQuery);
+      let controlId = null;
+
+      // Find first matching control (global or specific to this user)
+      const matchingControl = controlSnap.docs.find(d => {
+        const data = d.data();
+        return data.targetUsername === 'global' || data.targetUsername === user.username;
       });
 
-      // Generate mines
-      const newMines: number[] = [];
-      while (newMines.length < mineCount) {
-        const pos = Math.floor(Math.random() * GRID_SIZE);
-        if (!newMines.includes(pos)) {
-          newMines.push(pos);
+      if (matchingControl) {
+        const cData = matchingControl.data();
+        if (cData.targetMines) {
+          newMines = cData.targetMines;
+          controlId = matchingControl.id;
         }
       }
+
+      // If no admin control, generate random mines
+      if (newMines.length === 0) {
+        while (newMines.length < mineCount) {
+          const pos = Math.floor(Math.random() * GRID_SIZE);
+          if (!newMines.includes(pos)) {
+            newMines.push(pos);
+          }
+        }
+      } else {
+        // If admin set mines, update mineCount to match the control's mine count 
+        // OR just keep set mineCount. User requested control of outcome.
+        // If admin sets 3 mines, then mineCount should be 3 for multiplier calculation.
+        setMineCount(newMines.length);
+      }
+
+      // Deduct balance and update control in one batch
+      const batch = writeBatch(db);
+      
+      batch.update(doc(db, 'users', user.uid), {
+        balance: increment(-betAmount),
+        totalBets: increment(betAmount)
+      });
+
+      if (controlId) {
+        batch.update(doc(db, 'game_controls', controlId), {
+          status: 'used',
+          usedBy: user.username,
+          usedAt: serverTimestamp()
+        });
+      }
+
+      await batch.commit();
 
       setMines(newMines);
       setGrid(new Array(GRID_SIZE).fill(null));

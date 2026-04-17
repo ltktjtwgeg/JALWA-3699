@@ -164,9 +164,9 @@ export default function History() {
                 <div className="flex items-center gap-4">
                   <div className={cn(
                     "p-2 rounded-xl",
-                    t.type === 'deposit' || t.type === 'win' ? "bg-emerald-500/10" : "bg-rose-500/10"
+                    (t.type === 'deposit' || t.type === 'win' || t.type?.endsWith('_win')) ? "bg-emerald-500/10" : "bg-rose-500/10"
                   )}>
-                    {t.type === 'deposit' || t.type === 'win' ? (
+                    {(t.type === 'deposit' || t.type === 'win' || t.type?.endsWith('_win')) ? (
                       <ArrowDownCircle className="w-5 h-5 text-emerald-500" />
                     ) : (
                       <ArrowUpCircle className="w-5 h-5 text-rose-500" />
@@ -181,9 +181,9 @@ export default function History() {
                 <div className="text-right">
                   <p className={cn(
                     "font-bold",
-                    t.type === 'deposit' || t.type === 'win' ? "text-emerald-500" : "text-rose-500"
+                    (t.type === 'deposit' || t.type === 'win' || t.type?.endsWith('_win')) ? "text-emerald-500" : "text-rose-500"
                   )}>
-                    {t.type === 'deposit' || t.type === 'win' ? '+' : '-'}{formatCurrency(t.amount)}
+                    {(t.type === 'deposit' || t.type === 'win' || t.type?.endsWith('_win')) ? '+' : '-'}{formatCurrency(t.amount)}
                   </p>
                   <div className="flex items-center justify-end gap-1">
                     {t.status === 'completed' ? (
