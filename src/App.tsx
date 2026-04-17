@@ -42,6 +42,7 @@ import Feedback from './pages/Feedback';
 import CustomerService from './pages/CustomerService';
 import GameStatistics from './pages/GameStatistics';
 import VIP from './pages/VIP';
+import Mines from './pages/Mines';
 
 const AuthContext = createContext<{
   user: AppUser | null;
@@ -198,6 +199,7 @@ export default function App() {
             <Route path="/customer-service" element={<PrivateRoute><CustomerService /></PrivateRoute>} />
             <Route path="/game-statistics" element={<PrivateRoute><GameStatistics /></PrivateRoute>} />
             <Route path="/vip" element={<PrivateRoute><VIP /></PrivateRoute>} />
+            <Route path="/mines" element={<PrivateRoute><Mines /></PrivateRoute>} />
           </Routes>
         </BrowserRouter>
         <Toaster position="top-center" richColors />

@@ -27,17 +27,25 @@ export default function Home() {
   }, [banners.length]);
 
   const gameModes = [
-    { id: '1m', name: 'Wingo 1M', time: '1 Min', color: 'bg-rose-600', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo1m/200/200', category: 'popular' },
+    { id: '1m', name: 'Wingo 1M', time: '1 Min', color: 'bg-rose-600', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo1m/200/200', category: 'lottery' },
     { id: '30s', name: 'Wingo 30s', time: '30 Sec', color: 'bg-rose-500', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo30/200/200', category: 'lottery' },
     { id: '1m_lottery', id_real: '1m', name: 'Wingo 1M', time: '1 Min', color: 'bg-rose-600', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo1m/200/200', category: 'lottery' },
     { id: '3m', name: 'Wingo 3M', time: '3 Min', color: 'bg-rose-700', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo3m/200/200', category: 'lottery' },
     { id: '5m', name: 'Wingo 5M', time: '5 Min', color: 'bg-rose-800', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo5m/200/200', category: 'lottery' },
+    { id: 'mines', name: 'Mines', type: 'mines', color: 'bg-indigo-600', image: 'https://cdn-icons-png.flaticon.com/512/3593/3593441.png', fallback: 'https://picsum.photos/seed/mines/200/200', category: 'mini' },
   ];
 
-  const categories = [
+  interface Category {
+    id: string;
+    name: string;
+    icon: any;
+    badge?: string;
+  }
+
+  const categories: Category[] = [
     { id: 'popular', name: 'Popular', icon: Flame },
     { id: 'lottery', name: 'Lottery', icon: Target },
-    { id: 'mini', name: 'Mini games', icon: Rocket, badge: 'Upcoming' },
+    { id: 'mini', name: 'Mini games', icon: Rocket },
   ];
 
   const lotteryGames = [
@@ -51,6 +59,14 @@ export default function Home() {
   const filteredGames = activeCategory === 'lottery' 
     ? lotteryGames 
     : gameModes.filter(game => game.category === activeCategory);
+
+  const handleGameClick = (game: any) => {
+    if (game.id === 'mines') {
+       navigate('/mines');
+    } else {
+       navigate(`/game/${game.id_real || game.id}`);
+    }
+  };
 
   return (
     <div className="flex flex-col min-h-screen pb-24 bg-[#1a1d21] text-white">
@@ -164,7 +180,7 @@ export default function Home() {
               <motion.div
                 key={game.id}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => navigate(`/game/${game.id === '1m' ? '1m' : '1m'}`)} // Defaulting to 1m for demo
+                onClick={() => handleGameClick(game)}
                 className="flex flex-col gap-2"
               >
                 <div className={cn(
@@ -213,7 +229,7 @@ export default function Home() {
               <motion.div
                 key={mode.id}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => navigate(`/game/${(mode as any).id_real || mode.id}`)}
+                onClick={() => handleGameClick(mode)}
                 className="flex flex-col gap-2"
               >
                 <div className={cn("aspect-square rounded-2xl overflow-hidden relative shadow-xl border border-white/5", mode.color)}>
