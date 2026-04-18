@@ -4,7 +4,7 @@ import { ChevronLeft, Wallet, Info, RefreshCw, Trophy, History as HistoryIcon, X
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '../App';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { doc, updateDoc, increment, collection, addDoc, serverTimestamp, query, where, orderBy, limit, onSnapshot, getDocs, writeBatch } from 'firebase/firestore';
+import { doc, updateDoc, increment, collection, addDoc, serverTimestamp, query, where, orderBy, limit, onSnapshot, getDocs, writeBatch, setDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { formatCurrency, cn } from '../lib/utils';
 
@@ -40,7 +40,8 @@ const PAYOUTS = {
   number: 11.64,
   range: 1.94,
   evenOdd: 1.94,
-  color: 1.94
+  color: 1.94,
+  tax: 0.03 // 3% House Edge/Tax
 };
 
 export default function Roulette() {
@@ -138,10 +139,13 @@ export default function Roulette() {
 
       // Deduct balance and update control in one batch
       const batch = writeBatch(db);
+      const currentTurnover = user?.requiredTurnover || 0;
       
       batch.update(doc(db, 'users', user.uid), {
         balance: increment(-totalBetAmount),
-        totalBets: increment(totalBetAmount)
+        totalBets: increment(totalBetAmount),
+        dailyBets: increment(totalBetAmount),
+        requiredTurnover: Math.max(0, currentTurnover - totalBetAmount)
       });
 
       if (controlId) {
@@ -171,66 +175,81 @@ export default function Roulette() {
       // Save current bets for rebet
       setLastBets([...selectedBets]);
 
-      // Wait for animation
-      setTimeout(async () => {
-        setResultNumber(targetNumber);
-        setIsSpinning(false);
-        
-        // Calculate Win
-        let totalWin = 0;
-        selectedBets.forEach(bet => {
-          let won = false;
-          let multiplier = 0;
+        // Wait for animation
+        setTimeout(async () => {
+          setResultNumber(targetNumber);
+          setIsSpinning(false);
+          
+          // Calculate Win
+          let totalWin = 0;
+          selectedBets.forEach(bet => {
+            let won = false;
+            let multiplier = 0;
 
-          if (bet.type === 'number' && bet.value === targetNumber) {
-            won = true;
-            multiplier = PAYOUTS.number;
-          } else if (bet.type === 'range') {
-            if (bet.value === '1-6' && targetNumber >= 1 && targetNumber <= 6) won = true;
-            if (bet.value === '7-12' && targetNumber >= 7 && targetNumber <= 12) won = true;
-            multiplier = PAYOUTS.range;
-          } else if (bet.type === 'evenOdd') {
-            if (bet.value === 'Even' && targetNumber !== 0 && targetNumber % 2 === 0) won = true;
-            if (bet.value === 'Odd' && targetNumber % 2 !== 0) won = true;
-            multiplier = PAYOUTS.evenOdd;
-          } else if (bet.type === 'color') {
-            if (bet.value === 'red' && COLORS[targetNumber] === 'rose') won = true;
-            if (bet.value === 'black' && COLORS[targetNumber] === 'slate') won = true;
-            multiplier = PAYOUTS.color;
+            if (bet.type === 'number' && bet.value === targetNumber) {
+              won = true;
+              multiplier = PAYOUTS.number;
+            } else if (bet.type === 'range') {
+              if (bet.value === '1-6' && targetNumber >= 1 && targetNumber <= 6) won = true;
+              if (bet.value === '7-12' && targetNumber >= 7 && targetNumber <= 12) won = true;
+              multiplier = PAYOUTS.range;
+            } else if (bet.type === 'evenOdd') {
+              if (bet.value === 'Even' && targetNumber !== 0 && targetNumber % 2 === 0) won = true;
+              if (bet.value === 'Odd' && targetNumber % 2 !== 0) won = true;
+              multiplier = PAYOUTS.evenOdd;
+            } else if (bet.type === 'color') {
+              // Nine is black (slate), Red is rose
+              if (bet.value === 'red' && COLORS[targetNumber] === 'rose') won = true;
+              if (bet.value === 'black' && COLORS[targetNumber] === 'slate') won = true;
+              multiplier = PAYOUTS.color;
+            }
+
+            if (won) {
+              totalWin += bet.amount * multiplier;
+            }
+          });
+
+          // Calculate "Tax" (House edge)
+          const rouletteTax = totalBetAmount - totalWin;
+          if (rouletteTax !== 0) {
+             const taxRef = doc(db, 'stats', 'roulette');
+             await updateDoc(taxRef, { 
+               totalTax: increment(rouletteTax),
+               updatedAt: serverTimestamp() 
+             }).catch(() => {
+               // Create if doesn't exist
+               const { setDoc } = require('firebase/firestore');
+               setDoc(taxRef, { totalTax: rouletteTax, updatedAt: serverTimestamp() });
+             });
           }
 
-          if (won) {
-            totalWin += bet.amount * multiplier;
+          // Record Transaction
+          if (totalWin > 0) {
+            await updateDoc(doc(db, 'users', user.uid), {
+              balance: increment(totalWin)
+            });
+            await addDoc(collection(db, 'transactions'), {
+              uid: user.uid,
+              amount: totalWin,
+              type: 'roulette_win',
+              status: 'completed',
+              createdAt: serverTimestamp(),
+              description: `Roulette win on ${targetNumber}`
+            });
+            toast.success(`Won ${formatCurrency(totalWin)}!`);
+          } else {
+            await addDoc(collection(db, 'transactions'), {
+              uid: user.uid,
+              amount: totalBetAmount,
+              type: 'roulette_loss',
+              status: 'completed',
+              createdAt: serverTimestamp(),
+              description: `Roulette loss on ${targetNumber}`
+            });
           }
-        });
-
-        // Record Transaction
-        if (totalWin > 0) {
-          await updateDoc(doc(db, 'users', user.uid), {
-            balance: increment(totalWin)
-          });
-          await addDoc(collection(db, 'transactions'), {
-            uid: user.uid,
-            amount: totalWin,
-            type: 'roulette_win',
-            status: 'completed',
-            createdAt: serverTimestamp(),
-            description: `Roulette win on ${targetNumber}`
-          });
-          toast.success(`Won ${formatCurrency(totalWin)}!`);
-        } else {
-          await addDoc(collection(db, 'transactions'), {
-            uid: user.uid,
-            amount: totalBetAmount,
-            type: 'roulette_loss',
-            status: 'completed',
-            createdAt: serverTimestamp(),
-            description: `Roulette loss on ${targetNumber}`
-          });
-        }
-        
-        refreshUser();
-      }, 5000);
+          
+          refreshUser();
+        }, 7000); // 7 seconds for the result to show up after spin
 
     } catch (error) {
       console.error(error);
@@ -281,12 +300,7 @@ export default function Roulette() {
         </div>
 
         <div className="flex items-center gap-2">
-           <div className="bg-orange-500/90 px-4 py-1.5 rounded-full border border-white/20 shadow-lg transform -skew-x-12">
-              <span className="text-[10px] font-black uppercase tracking-widest text-white italic">How to Play?</span>
-           </div>
-           <div className="bg-orange-400 px-6 py-1.5 rounded-lg border-2 border-white/30 shadow-[0_4px_0_rgba(0,0,0,0.2)]">
-              <span className="text-[10px] font-black uppercase tracking-widest text-black">Fun Mode</span>
-           </div>
+           {/* Removed How to Play and Fun Mode */}
         </div>
 
         <div className="flex items-center gap-3">
@@ -294,12 +308,7 @@ export default function Roulette() {
               <span className="text-[10px] font-bold text-emerald-300 uppercase tracking-widest leading-tight">Balance</span>
               <span className="text-sm font-black text-white tabular-nums">₹{user?.balance.toFixed(2)}</span>
            </div>
-           <button className="bg-emerald-700/50 p-1.5 rounded-lg border border-white/10 active:scale-95">
-              <div className="w-0.5 h-3 bg-white mx-auto mb-0.5 rounded-full" />
-              <div className="w-4 h-0.5 bg-white mb-0.5 rounded-full" />
-              <div className="w-4 h-0.5 bg-white mb-0.5 rounded-full" />
-              <div className="w-4 h-0.5 bg-white rounded-full" />
-           </button>
+           {/* Menu button removed as per request */}
         </div>
       </div>
 
@@ -315,7 +324,7 @@ export default function Roulette() {
             {/* Spinning Wheel */}
             <motion.div 
               animate={{ rotate: rotation }}
-              transition={{ duration: 5, ease: [0.12, 0, 0.39, 0] }}
+              transition={{ duration: 6, ease: [0.33, 1, 0.68, 1] }} // Heavy bearing finish
               className="relative w-[92%] h-[92%] rounded-full overflow-hidden"
             >
                 <div 
@@ -363,7 +372,7 @@ export default function Roulette() {
             {/* Ball Track Animation */}
             <motion.div
               animate={{ rotate: ballRotation }}
-              transition={{ duration: 5, ease: [0.22, 1, 0.36, 1] }}
+              transition={{ duration: 6, ease: [0.33, 1, 0.68, 1] }}
               className="absolute inset-0 z-20 pointer-events-none"
             >
               <div className="absolute top-[4%] left-1/2 -translate-x-1/2 w-3 h-3 bg-white rounded-full shadow-[0_0_10px_white,inset_-1px_-1px_3px_rgba(0,0,0,0.3)]" />
@@ -702,7 +711,8 @@ export default function Roulette() {
   function targetColor(num: number) {
     const c = COLORS[num];
     if (c === 'emerald') return 'bg-emerald-600';
-    if (c === 'rose') return 'bg-rose-600';
+    if (c === 'rose') return 'bg-[#E11D48]'; // Explicit Red match
+    if (c === 'slate') return 'bg-[#1a1a1a]'; // Explicit Black match
     return 'bg-[#121212]';
   }
 }

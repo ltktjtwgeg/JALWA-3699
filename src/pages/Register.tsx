@@ -67,13 +67,17 @@ export default function Register() {
           balance: 0,
           totalDeposits: 0,
           totalBets: 0,
+          dailyDeposits: 0,
+          dailyBets: 0,
           vipLevel: 0,
           inviteCode: numericUid,
           invitedBy: inviteCode || null,
           createdAt: serverTimestamp(),
           lastLoginAt: serverTimestamp(),
           role: 'user',
-          isDemo: false
+          isDemo: false,
+          requiredTurnover: 0,
+          claimedInvitationBonuses: []
         });
       });
 

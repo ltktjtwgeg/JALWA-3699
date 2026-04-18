@@ -11,11 +11,18 @@ import {
   updateDoc,
   setDoc,
   addDoc,
+  increment,
   serverTimestamp
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { GameType } from '../types';
 import { GAME_DURATIONS } from './gameService';
+
+export interface Banner {
+  id: string;
+  image: string;
+  link?: string;
+}
 
 export interface SystemSettings {
   wingoAutoControl: boolean;
@@ -29,6 +36,10 @@ export interface SystemSettings {
   upiImage?: string;
   usdtAddress: string;
   usdtImage?: string;
+  gameStatuses: Record<string, boolean>;
+  banners?: Banner[];
+  popupBannerUrl?: string;
+  showPopup?: boolean;
 }
 
 export const DEFAULT_SETTINGS: SystemSettings = {
@@ -40,7 +51,26 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   maintenanceMode: false,
   commissionRate: 0.02,
   upiId: '',
-  usdtAddress: ''
+  usdtAddress: '',
+  gameStatuses: {
+    '1m': true,
+    '30s': true,
+    '3m': true,
+    '5m': true,
+    'mines': true,
+    'roulette': true,
+    'wingo': true,
+    'k3': false,
+    '5d': false,
+    'trx': false
+  },
+  banners: [
+    { id: '1', image: '/images/slider_banner/custom_banner_1.png' },
+    { id: '2', image: '/images/slider_banner/custom_banner_2.png' },
+    { id: '3', image: '/images/slider_banner/custom_banner_3.png' }
+  ],
+  popupBannerUrl: '',
+  showPopup: true
 };
 
 export async function getSystemSettings(): Promise<SystemSettings> {
@@ -194,4 +224,76 @@ export async function getGiftCodes() {
 export async function deleteGiftCode(id: string) {
   const { deleteDoc } = await import('firebase/firestore');
   await deleteDoc(doc(db, 'giftCodes', id));
+}
+
+export async function getPendingTransactions(type: 'deposit' | 'withdraw') {
+  const q = query(
+    collection(db, 'transactions'),
+    where('type', '==', type),
+    where('status', '==', 'pending'),
+    orderBy('createdAt', 'desc')
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+export async function updateTransactionStatus(id: string, status: 'completed' | 'rejected', uid: string) {
+  const transRef = doc(db, 'transactions', id);
+  const transSnap = await getDoc(transRef);
+  if (!transSnap.exists()) return;
+  
+  const transData = transSnap.data();
+  if (transData.status !== 'pending') return;
+
+  const userRef = doc(db, 'users', uid);
+  
+  if (status === 'completed') {
+    if (transData.type === 'deposit') {
+      await updateDoc(userRef, { 
+        balance: increment(transData.amount),
+        totalDeposits: increment(transData.amount),
+        dailyDeposits: increment(transData.amount),
+        requiredTurnover: increment(transData.amount)
+      });
+    }
+  } else if (status === 'rejected') {
+    if (transData.type === 'withdraw') {
+      // Refund balance if withdrawal rejected
+      await updateDoc(userRef, { balance: increment(transData.amount) });
+    }
+  }
+
+  await updateDoc(transRef, { 
+    status, 
+    updatedAt: serverTimestamp() 
+  });
+}
+
+export async function setMinesControl(targetUsername: string, targetMines: number[]) {
+  await addDoc(collection(db, 'game_controls'), {
+    type: 'mines',
+    targetUsername, // 'global' or specific username
+    targetMines,
+    status: 'pending',
+    createdAt: serverTimestamp()
+  });
+}
+
+export async function setRouletteControl(targetUsername: string, targetNumber: number) {
+  await addDoc(collection(db, 'game_controls'), {
+    type: 'roulette',
+    targetUsername,
+    targetNumber,
+    status: 'pending',
+    createdAt: serverTimestamp()
+  });
+}
+
+export async function getUsers(search?: string) {
+  let q = query(collection(db, 'users'), orderBy('createdAt', 'desc'), limit(100));
+  if (search) {
+     q = query(collection(db, 'users'), where('username', '==', search));
+  }
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }

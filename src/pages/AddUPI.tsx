@@ -4,8 +4,8 @@ import { ChevronLeft, User, Smartphone, CreditCard, Info } from 'lucide-react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 
-import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from '../firebase';
+import { doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
+import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 
 export default function AddUPI() {
   const navigate = useNavigate();
@@ -41,7 +41,7 @@ export default function AddUPI() {
         name: formData.upiName,
         upiId: formData.upiId,
         phone: formData.phoneNumber,
-        createdAt: serverTimestamp()
+        createdAt: Timestamp.now()
       };
 
       const userDoc = await getDoc(userRef);
@@ -50,13 +50,19 @@ export default function AddUPI() {
         await updateDoc(userRef, {
           paymentMethods: [...currentMethods, newMethod]
         });
+        toast.success('UPI information added successfully');
+        navigate('/withdraw/payment-methods');
+      } else {
+        toast.error('User profile not found. Please try logging in again.');
       }
-
-      toast.success('UPI information added successfully');
-      navigate('/withdraw/payment-methods');
     } catch (error) {
       console.error(error);
-      toast.error('Failed to add UPI');
+      try {
+        handleFirestoreError(error, OperationType.UPDATE, `users/${auth.currentUser?.uid}`);
+      } catch (err: any) {
+        const errData = JSON.parse(err.message);
+        toast.error(`Failed to add UPI: ${errData.error}`);
+      }
     } finally {
       setLoading(false);
     }

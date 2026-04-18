@@ -42,7 +42,9 @@ export default function Deposit() {
       // Update balance and total deposits
       await updateDoc(doc(db, 'users', user.uid), {
         balance: increment(depositAmount),
-        totalDeposits: increment(depositAmount)
+        totalDeposits: increment(depositAmount),
+        dailyDeposits: increment(depositAmount),
+        requiredTurnover: increment(depositAmount)
       });
 
       // Add transaction

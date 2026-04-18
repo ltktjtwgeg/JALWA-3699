@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Landmark, User, CreditCard, Smartphone, Mail, Search, Info } from 'lucide-react';
-import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from '../firebase';
+import { doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
+import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -57,7 +57,7 @@ export default function AddBankCard() {
         ifsc: formData.ifscCode,
         phone: formData.phoneNumber,
         email: formData.email,
-        createdAt: serverTimestamp()
+        createdAt: Timestamp.now()
       };
 
       const userDoc = await getDoc(userRef);
@@ -66,13 +66,19 @@ export default function AddBankCard() {
         await updateDoc(userRef, {
           paymentMethods: [...currentMethods, newMethod]
         });
+        toast.success('Bank card added successfully');
+        navigate('/withdraw/payment-methods');
+      } else {
+        toast.error('User profile not found. Please try logging in again.');
       }
-
-      toast.success('Bank card added successfully');
-      navigate('/withdraw/payment-methods');
     } catch (error) {
       console.error(error);
-      toast.error('Failed to add bank card');
+      try {
+        handleFirestoreError(error, OperationType.UPDATE, `users/${auth.currentUser?.uid}`);
+      } catch (err: any) {
+        const errData = JSON.parse(err.message);
+        toast.error(`Failed to add bank card: ${errData.error}`);
+      }
     }
   };
 

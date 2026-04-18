@@ -44,6 +44,7 @@ import GameStatistics from './pages/GameStatistics';
 import VIP from './pages/VIP';
 import Mines from './pages/Mines';
 import Roulette from './pages/Roulette';
+import InvitationBonus from './pages/InvitationBonus';
 import PaymentMethods from './pages/PaymentMethods';
 import SuperAdmin from './pages/SuperAdmin';
 import AdminPortal from './pages/Admin/AdminPortal';
@@ -93,9 +94,29 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   // Listen for real-time user updates (balance, etc)
   useEffect(() => {
     if (firebaseUser) {
-      const unsubscribe = onSnapshot(doc(db, 'users', firebaseUser.uid), (doc) => {
-        if (doc.exists()) {
-          setUser(doc.data() as AppUser);
+      const unsubscribe = onSnapshot(doc(db, 'users', firebaseUser.uid), (userDoc) => {
+        if (userDoc.exists()) {
+          const userData = userDoc.data() as AppUser;
+          
+          // Daily Reset Logic
+          const lastReset = userData.lastStatsResetAt?.toDate();
+          const now = new Date();
+          const isDifferentDay = !lastReset || 
+            lastReset.getDate() !== now.getDate() || 
+            lastReset.getMonth() !== now.getMonth() || 
+            lastReset.getFullYear() !== now.getFullYear();
+
+          if (isDifferentDay) {
+            import('firebase/firestore').then(({ updateDoc, Timestamp }) => {
+              updateDoc(userDoc.ref, {
+                dailyDeposits: 0,
+                dailyBets: 0,
+                lastStatsResetAt: Timestamp.now()
+              });
+            });
+          }
+          
+          setUser(userData);
         }
       });
       return () => unsubscribe();
@@ -213,13 +234,20 @@ export default function App() {
                   <Route path="/vip" element={<PrivateRoute><VIP /></PrivateRoute>} />
                   <Route path="/mines" element={<PrivateRoute><Mines /></PrivateRoute>} />
                   <Route path="/roulette" element={<PrivateRoute><Roulette /></PrivateRoute>} />
+                  <Route path="/activity/invitation-bonus" element={<PrivateRoute><InvitationBonus /></PrivateRoute>} />
                   <Route path="/withdraw/payment-methods" element={<PrivateRoute><PaymentMethods /></PrivateRoute>} />
                 </Routes>
               </MobileLayout>
             } />
           </Routes>
         </BrowserRouter>
-        <Toaster position="top-center" richColors />
+        <Toaster 
+          position="top-center" 
+          richColors 
+          duration={1500} 
+          visibleToasts={1}
+          closeButton={true}
+        />
       </div>
     </AuthProvider>
   );

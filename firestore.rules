@@ -237,6 +237,11 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    match /system_config/main {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     match /metadata/counters {
       allow read: if true;
       allow write: if isAuthenticated();

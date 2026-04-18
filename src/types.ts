@@ -27,6 +27,11 @@ export interface User {
   balance: number;
   totalDeposits?: number;
   totalBets?: number;
+  dailyDeposits?: number;
+  dailyBets?: number;
+  requiredTurnover?: number;
+  claimedInvitationBonuses?: string[];
+  lastStatsResetAt?: Timestamp;
   vipLevel: number;
   inviteCode: string;
   invitedBy?: string;
@@ -35,6 +40,7 @@ export interface User {
   role: 'user' | 'admin';
   isDemo?: boolean;
   paymentMethods?: PaymentMethod[];
+  selectedPaymentMethodId?: string;
 }
 
 export interface Game {

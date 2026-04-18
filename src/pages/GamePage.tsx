@@ -107,7 +107,7 @@ export default function GamePage() {
   const isFirstLoad = useRef(true);
   const [gamePage, setGamePage] = useState(1);
   const [myPage, setMyPage] = useState(1);
-  const ITEMS_PER_PAGE = 50;
+  const ITEMS_PER_PAGE = 10;
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [agreed, setAgreed] = useState(true);
   const hasPlayedCountdown = useRef(false);
@@ -319,7 +319,7 @@ export default function GamePage() {
     if (showResultModal) {
       timer = setTimeout(() => {
         setShowResultModal(false);
-      }, 4000); // Increased to 4s as requested "not working at 3s" (likely too fast)
+      }, 2000); // Reduced to 2s as requested "automatic jaldi se hat jaaye"
     }
     return () => {
       if (timer) clearTimeout(timer);
@@ -389,11 +389,14 @@ export default function GamePage() {
         if (!userSnap.exists()) throw new Error('User not found');
         
         const currentBalance = userSnap.data().balance;
+        const currentTurnover = userSnap.data().requiredTurnover || 0;
         if (currentBalance < total) throw new Error('Insufficient balance');
 
         transaction.update(userRef, { 
           balance: increment(-total),
-          totalBets: increment(total)
+          totalBets: increment(total),
+          dailyBets: increment(total),
+          requiredTurnover: Math.max(0, currentTurnover - total)
         });
 
         const fee = total * 0.04;
@@ -543,6 +546,16 @@ export default function GamePage() {
   };
 
   const theme = getBetTheme();
+
+  // Slice history for pagination
+  const pagedHistory = useMemo(() => {
+    return history.slice((gamePage - 1) * ITEMS_PER_PAGE, gamePage * ITEMS_PER_PAGE);
+  }, [history, gamePage]);
+
+  // Slice my bets for pagination
+  const pagedMyBets = useMemo(() => {
+    return myBets.slice((myPage - 1) * ITEMS_PER_PAGE, myPage * ITEMS_PER_PAGE);
+  }, [myBets, myPage]);
 
   return (
     <div className="flex flex-col min-h-screen bg-[#1a1d21] pb-10">
@@ -934,7 +947,7 @@ export default function GamePage() {
               <span className="text-center">Big Small</span>
               <span className="text-right">Color</span>
             </div>
-            {history.slice((gamePage - 1) * ITEMS_PER_PAGE, gamePage * ITEMS_PER_PAGE).map((game) => (
+            {pagedHistory.map((game) => (
               <div key={game.id} className="bg-[#1f2228] p-3 rounded-xl border border-gray-800 grid grid-cols-4 items-center">
                 <span className="text-xs font-mono text-gray-400">{game.periodId}</span>
                 <div className="flex justify-center">
@@ -1083,7 +1096,7 @@ export default function GamePage() {
 
         {activeTab === 'my' && (
           <div className="space-y-4">
-            {myBets.slice((myPage - 1) * ITEMS_PER_PAGE, myPage * ITEMS_PER_PAGE).map((bet) => (
+            {pagedMyBets.map((bet) => (
               <div key={bet.id} className="bg-[#1f2228] p-4 rounded-2xl border border-gray-800 flex items-center gap-4">
                 {!isNaN(Number(bet.selection)) ? (
                   <div className={cn(
@@ -1289,7 +1302,7 @@ export default function GamePage() {
                   <div className="w-5 h-5 rounded-full bg-white flex items-center justify-center shadow-inner">
                     <Check className="w-3.5 h-3.5 text-rose-500" />
                   </div>
-                  3 seconds auto close
+                  2 seconds auto close
                 </div>
               </div>
             </motion.div>

@@ -88,10 +88,13 @@ export default function Mines() {
 
       // Deduct balance and update control in one batch
       const batch = writeBatch(db);
+      const currentTurnover = user?.requiredTurnover || 0;
       
       batch.update(doc(db, 'users', user.uid), {
         balance: increment(-betAmount),
-        totalBets: increment(betAmount)
+        totalBets: increment(betAmount),
+        dailyBets: increment(betAmount),
+        requiredTurnover: Math.max(0, currentTurnover - betAmount)
       });
 
       if (controlId) {

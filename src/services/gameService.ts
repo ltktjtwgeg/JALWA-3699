@@ -81,8 +81,25 @@ export async function processGameResults(type: GameType) {
             usedAt: serverTimestamp()
           });
         } else {
-          // Use true randomness instead of deterministic pattern
-          resultNumber = Math.floor(Math.random() * 10);
+          // Check for Auto Control (Least Amount wins)
+          const settingsSnap = await getDoc(doc(db, 'system_config', 'main'));
+          const settings = settingsSnap.exists() ? settingsSnap.data() : { wingoAutoControl: false };
+
+          if (settings.wingoAutoControl) {
+            const { getGamePoolStats } = require('./adminService');
+            const pool = await getGamePoolStats(type);
+            
+            // Find outcome with LEAST payout
+            const numberPayouts = pool.numbers.map((amt: number) => amt * 8.64);
+            const minPayout = Math.min(...numberPayouts);
+            const candidates = [];
+            for(let n=0; n<10; n++) {
+              if (numberPayouts[n] === minPayout) candidates.push(n);
+            }
+            resultNumber = candidates[Math.floor(Math.random() * candidates.length)];
+          } else {
+             resultNumber = Math.floor(Math.random() * 10);
+          }
         }
 
         const resultColor = getResultColor(resultNumber);

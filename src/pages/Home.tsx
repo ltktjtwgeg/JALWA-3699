@@ -2,24 +2,31 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../App';
 import { formatCurrency, cn } from '../lib/utils';
-import { Wallet, ArrowUpCircle, ArrowDownCircle, Trophy, History, ShieldCheck, Bell, ChevronRight, RefreshCw, Gift, Download, Globe, Plus, PlayCircle, Gamepad2, LayoutGrid, ChevronLeft, Flame, Target, Rocket } from 'lucide-react';
+import { Wallet, ArrowUpCircle, ArrowDownCircle, Trophy, History, ShieldCheck, Bell, ChevronRight, RefreshCw, Gift, Download, Globe, Plus, PlayCircle, Gamepad2, LayoutGrid, ChevronLeft, Flame, Target, Rocket, X, Check, Users } from 'lucide-react';
 import BottomNav from '../components/BottomNav';
 import { motion, AnimatePresence } from 'motion/react';
+import { getSystemSettings, SystemSettings } from '../services/adminService';
 
 export default function Home() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [activeCategory, setActiveCategory] = useState('popular');
   const [currentBanner, setCurrentBanner] = useState(0);
+  const [settings, setSettings] = useState<SystemSettings | null>(null);
 
-  const banners = [
-    { id: 1, image: '/images/slider_banner/banner1.png', fallback: 'https://picsum.photos/seed/banner1/800/400' },
-    { id: 2, image: '/images/slider_banner/banner2.png', fallback: 'https://picsum.photos/seed/banner2/800/400' },
-    { id: 3, image: '/images/slider_banner/banner3.png', fallback: 'https://picsum.photos/seed/banner3/800/400' },
-    { id: 4, image: '/images/slider_banner/banner4.png', fallback: 'https://picsum.photos/seed/banner4/800/400' },
+  useEffect(() => {
+    getSystemSettings().then(setSettings);
+  }, []);
+
+  const banners = settings?.banners || [
+    { id: '1', image: '/images/slider_banner/banner1.png' },
+    { id: '2', image: '/images/slider_banner/banner2.png' },
+    { id: '3', image: '/images/slider_banner/banner3.png' },
+    { id: '4', image: '/images/slider_banner/banner4.png' },
   ];
 
   useEffect(() => {
+    if (banners.length <= 1) return;
     const timer = setInterval(() => {
       setCurrentBanner((prev) => (prev + 1) % banners.length);
     }, 3000);
@@ -59,11 +66,52 @@ export default function Home() {
     { id: 'trx', name: 'Trx Wingo', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/trx/200/200', fallback: 'https://picsum.photos/seed/trx/200/200', isUpcoming: true },
   ];
 
+  const [showBonusPopup, setShowBonusPopup] = useState(false);
+  const [noMoreToday, setNoMoreToday] = useState(false);
+
+  useEffect(() => {
+    if (settings?.showPopup === false) {
+      setShowBonusPopup(false);
+      return;
+    }
+
+    const today = new Date().toDateString();
+    const lastHiddenDate = localStorage.getItem('bonus_popup_hidden_date');
+    
+    if (lastHiddenDate !== today) {
+      setShowBonusPopup(true);
+    }
+  }, [settings?.showPopup]);
+
+  const handleBonusPopupClose = () => {
+    if (noMoreToday) {
+      localStorage.setItem('bonus_popup_hidden_date', new Date().toDateString());
+    }
+    setShowBonusPopup(false);
+  };
+
+  const getIsUpcoming = (gameId: string, defaultStatus: boolean = false) => {
+    if (!settings) return defaultStatus;
+    // If the game status is explicitly set to false by admin, it is upcoming (off)
+    return settings.gameStatuses?.[gameId] === false;
+  };
+
+  const dynamicGameModes = gameModes.map(game => ({
+    ...game,
+    isUpcoming: getIsUpcoming(game.id, (game as any).isUpcoming)
+  }));
+
+  const dynamicLotteryGames = lotteryGames.map(game => ({
+    ...game,
+    isUpcoming: getIsUpcoming(game.id, game.isUpcoming)
+  }));
+
   const filteredGames = activeCategory === 'lottery' 
-    ? lotteryGames 
-    : gameModes.filter(game => game.category === activeCategory);
+    ? dynamicLotteryGames 
+    : dynamicGameModes.filter(game => game.category === activeCategory);
 
   const handleGameClick = (game: any) => {
+    if (game.isUpcoming) return; // Prevent clicking upcoming games
     if (game.id === 'mines') {
        navigate('/mines');
     } else if (game.id === 'roulette') {
@@ -104,7 +152,7 @@ export default function Home() {
       </div>
 
       {/* Banner Slider */}
-      <div className="p-3">
+      <div className="p-3 pt-6">
         <div className="relative h-40 bg-[#2a2e35] rounded-2xl overflow-hidden shadow-2xl border border-white/5">
           <AnimatePresence mode="wait">
             <motion.img
@@ -242,6 +290,14 @@ export default function Home() {
                 className="flex flex-col gap-2"
               >
                 <div className={cn("aspect-square rounded-2xl overflow-hidden relative shadow-xl border border-white/5", mode.color)}>
+                  {/* Upcoming Overlay */}
+                  {mode.isUpcoming && (
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] z-20 flex items-center justify-center">
+                      <div className="bg-rose-500 text-[8px] font-black uppercase px-2 py-0.5 rounded-full text-white rotate-[-15deg] shadow-lg border border-white/20">
+                        Upcoming
+                      </div>
+                    </div>
+                  )}
                   <img 
                     src={mode.image} 
                     alt={mode.name} 
@@ -260,6 +316,148 @@ export default function Home() {
       </div>
 
       <BottomNav />
-    </div>
-  );
+      {/* Bonus Popup */}
+      <AnimatePresence>
+        {showBonusPopup && (
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/70 backdrop-blur-sm p-6 overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 50 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 50 }}
+              className="w-full max-w-sm bg-[#322c5c] rounded-[32px] overflow-hidden shadow-2xl relative"
+            >
+              {settings?.popupBannerUrl ? (
+                <div className="relative">
+                  <img 
+                    src={settings.popupBannerUrl} 
+                    alt="Promotion" 
+                    className="w-full object-contain"
+                    onError={(e) => e.currentTarget.style.display = 'none'}
+                  />
+                  <button 
+                    onClick={handleBonusPopupClose}
+                    className="absolute top-4 right-4 p-1 bg-black/40 hover:bg-black/60 rounded-full transition-colors z-10"
+                  >
+                    <X className="w-5 h-5 text-white" />
+                  </button>
+                  <div className="p-4 bg-[#322c5c] flex justify-between items-center">
+                    <div 
+                      className="flex items-center gap-2 cursor-pointer"
+                      onClick={() => setNoMoreToday(!noMoreToday)}
+                    >
+                      <div className={cn(
+                        "w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all",
+                        noMoreToday ? "border-emerald-500 bg-emerald-500" : "border-white/30"
+                      )}>
+                        {noMoreToday && <Check className="w-3.5 h-3.5 text-white" />}
+                      </div>
+                      <span className="text-[10px] font-bold text-white/50 uppercase tracking-tight">No reminders today</span>
+                    </div>
+                    <button 
+                      onClick={() => { navigate('/activity'); handleBonusPopupClose(); }}
+                      className="bg-gradient-to-r from-purple-500 to-indigo-600 text-white text-[11px] font-black px-6 py-2 rounded-full uppercase tracking-widest shadow-lg"
+                    >
+                      Activity
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Header */}
+                  <div className="bg-[#b191ff] p-5 text-center relative">
+                <h2 className="text-white font-black text-lg italic uppercase tracking-widest">Extra first deposit bonus</h2>
+                <p className="text-[10px] text-white/80 font-bold mt-1 uppercase tracking-tighter">Each account can only receive rewards once</p>
+                <button 
+                  onClick={handleBonusPopupClose}
+                  className="absolute top-4 right-4 p-1 hover:bg-black/10 rounded-full transition-colors"
+                >
+                  <X className="w-5 h-5 text-white" />
+                </button>
+              </div>
+
+              {/* Bonus Items */}
+              <div className="p-4 pt-2 space-y-3">
+                <div className="bg-gradient-to-r from-emerald-600/20 to-emerald-400/10 rounded-2xl p-4 border border-emerald-500/20 mb-4">
+                   <div className="flex items-center gap-3 mb-2">
+                      <div className="bg-emerald-500/20 p-2 rounded-xl">
+                         <Users className="w-5 h-5 text-emerald-400" />
+                      </div>
+                      <h4 className="text-sm font-black text-white italic">Invitation Reward</h4>
+                   </div>
+                   <p className="text-[10px] text-white/60 leading-tight">
+                      Invite friends and earn up to ₹3,00,000 in bonuses when they deposit. Both parties benefit!
+                   </p>
+                   <button 
+                      onClick={() => navigate('/activity/invitation-bonus')}
+                      className="mt-3 w-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-black py-2 rounded-xl hover:bg-emerald-500/30 transition-all uppercase tracking-widest"
+                   >
+                      View Invitation Rewards
+                   </button>
+                </div>
+
+                <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest pl-1">First Deposit Bonuses</h3>
+                {[
+                  { amount: 100, bonus: 18 },
+                  { amount: 300, bonus: 28 },
+                  { amount: 500, bonus: 108 },
+                  { amount: 1000, bonus: 188 },
+                ].map((item, idx) => (
+                  <div key={idx} className="bg-[#413b7a] rounded-2xl p-4 border border-white/5 relative group">
+                    <div className="flex justify-between items-start mb-1">
+                      <h4 className="text-sm font-black text-white italic">First deposit{item.amount}</h4>
+                      <span className="text-orange-400 font-bold text-xs">+ ₹{item.bonus}.00</span>
+                    </div>
+                    <p className="text-[10px] text-white/50 leading-tight mb-3">
+                      Deposit {item.amount} for the first time and you will receive {item.bonus} bonus
+                    </p>
+                    
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-6 bg-white/10 rounded-full relative overflow-hidden border border-white/10 shadow-inner">
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-white/30 z-10">0/{item.amount}</div>
+                        <div 
+                           className="h-full bg-gradient-to-r from-teal-400 to-teal-500 rounded-full opacity-30 shadow-lg"
+                           style={{ width: '0%' }}
+                        />
+                      </div>
+                      <button 
+                         onClick={() => { navigate('/deposit'); handleBonusPopupClose(); }}
+                         className="bg-[#6b58ce] hover:bg-[#7d68e0] text-orange-400 text-[11px] font-black px-5 py-1.5 rounded-xl border border-white/10 shadow-lg active:scale-95 transition-all uppercase tracking-widest"
+                      >
+                         Deposit
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 pb-6 pt-2 flex items-center justify-between">
+                <div 
+                  className="flex items-center gap-2 cursor-pointer group"
+                  onClick={() => setNoMoreToday(!noMoreToday)}
+                >
+                  <div className={cn(
+                    "w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all",
+                    noMoreToday ? "border-emerald-500 bg-emerald-500" : "border-white/30"
+                  )}>
+                    {noMoreToday && <Check className="w-3.5 h-3.5 text-white" />}
+                  </div>
+                  <span className="text-[10px] font-bold text-white/50 group-hover:text-white/80 transition-colors uppercase tracking-tight">No more reminders today</span>
+                </div>
+                
+                <button 
+                  onClick={() => { navigate('/activity'); handleBonusPopupClose(); }}
+                  className="bg-gradient-to-r from-[#ff6b95] to-[#7d68e0] text-white text-[11px] font-black px-6 py-2.5 rounded-full shadow-xl shadow-purple-900/40 active:scale-95 transition-all uppercase tracking-widest"
+                >
+                  Activity
+                </button>
+              </div>
+            </>
+          )}
+        </motion.div>
+      </div>
+    )}
+  </AnimatePresence>
+</div>
+);
 }

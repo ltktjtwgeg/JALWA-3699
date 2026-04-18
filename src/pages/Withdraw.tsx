@@ -40,6 +40,11 @@ export default function Withdraw() {
   const handleWithdraw = async () => {
     if (!user || !amount || parseFloat(amount) < 110) return toast.error('Minimum withdrawal is ₹110');
     const withdrawAmount = parseFloat(amount);
+    
+    if (user.requiredTurnover && user.requiredTurnover > 0) {
+      return toast.error(`You need to bet ₹${user.requiredTurnover.toFixed(2)} more before you can withdraw`);
+    }
+
     if (user.balance < withdrawAmount) return toast.error('Insufficient balance');
     
     const hasMethod = user.paymentMethods?.some(m => m.type === withdrawMethod);
@@ -94,7 +99,8 @@ export default function Withdraw() {
     }
   };
 
-  const selectedMethod = user?.paymentMethods?.find(m => m.type === withdrawMethod);
+  const selectedMethod = user?.paymentMethods?.find(m => m.id === user?.selectedPaymentMethodId && m.type === withdrawMethod) || 
+                       user?.paymentMethods?.find(m => m.type === withdrawMethod);
 
   return (
     <div className="flex flex-col min-h-screen bg-[#1a1d21] text-white">
@@ -180,7 +186,7 @@ export default function Withdraw() {
         <div className="space-y-4">
           {selectedMethod ? (
             <div 
-              onClick={() => navigate('/withdraw/payment-methods')}
+              onClick={() => navigate('/withdraw/payment-methods', { state: { type: withdrawMethod, fromWithdraw: true } })}
               className="bg-[#2a2e35] p-4 rounded-xl border border-gray-800 flex items-center justify-between cursor-pointer active:scale-[0.98] transition-all"
             >
               <div className="flex items-center gap-4">
@@ -202,7 +208,7 @@ export default function Withdraw() {
             </div>
           ) : (
             <button 
-              onClick={() => navigate('/withdraw/payment-methods')}
+              onClick={() => navigate('/withdraw/payment-methods', { state: { type: withdrawMethod, fromWithdraw: true } })}
               className="w-full py-12 bg-[#2a2e35] border border-dashed border-gray-700 rounded-xl flex flex-col items-center justify-center gap-3 text-gray-500 hover:bg-[#32373e] transition-all"
             >
               <div className="w-10 h-10 border-2 border-dashed border-gray-600 rounded-lg flex items-center justify-center">
@@ -283,7 +289,7 @@ export default function Withdraw() {
         <div className="bg-[#1f2228] p-6 rounded-2xl border border-gray-800 space-y-4">
           <ul className="space-y-4">
             {[
-              { label: 'Need to bet', value: '₹0.00', sub: 'to be able to withdraw' },
+              { label: 'Need to bet', value: `₹${(user?.requiredTurnover || 0).toFixed(2)}`, sub: 'to be able to withdraw' },
               { label: 'Withdraw time', value: '00:10-23:50' },
               { label: 'Inday Remaining Withdrawal Times', value: '3' },
               { label: 'Withdrawal amount range', value: '₹110.00-₹1,000,000.00' },

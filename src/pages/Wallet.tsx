@@ -86,11 +86,11 @@ export default function Wallet() {
             
             <div className="w-full grid grid-cols-2 divide-x divide-white/20">
               <div className="text-center">
-                <p className="text-lg font-black text-white">₹{(user?.totalBets || 0).toFixed(2)}</p>
+                <p className="text-lg font-black text-white">₹{(user?.dailyBets || 0).toFixed(2)}</p>
                 <p className="text-[8px] text-white/60 font-bold uppercase tracking-tighter">Total amount</p>
               </div>
               <div className="text-center">
-                <p className="text-lg font-black text-white">₹{(user?.totalDeposits || 0).toFixed(2)}</p>
+                <p className="text-lg font-black text-white">₹{(user?.dailyDeposits || 0).toFixed(2)}</p>
                 <p className="text-[8px] text-white/60 font-bold uppercase tracking-tighter">Total deposit amount</p>
               </div>
             </div>

@@ -4,8 +4,8 @@ import { ChevronLeft, Info, Globe, Tag } from 'lucide-react';
 import { motion } from 'motion/react';
 import { toast } from 'sonner';
 
-import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db, auth } from '../firebase';
+import { doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
+import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 
 export default function AddUSDT() {
   const navigate = useNavigate();
@@ -30,9 +30,9 @@ export default function AddUSDT() {
         id: Math.random().toString(36).substr(2, 9),
         type: 'usdt' as const,
         alias: formData.alias || `USDT (${formData.network})`,
-        address: formData.address,
+        usdtAddress: formData.address,
         network: formData.network,
-        createdAt: serverTimestamp()
+        createdAt: Timestamp.now()
       };
 
       const userDoc = await getDoc(userRef);
@@ -41,13 +41,19 @@ export default function AddUSDT() {
         await updateDoc(userRef, {
           paymentMethods: [...currentMethods, newMethod]
         });
+        toast.success('USDT address added successfully');
+        navigate('/withdraw/payment-methods');
+      } else {
+        toast.error('User profile not found. Please try logging in again.');
       }
-
-      toast.success('USDT address added successfully');
-      navigate('/withdraw/payment-methods');
     } catch (error) {
       console.error(error);
-      toast.error('Failed to add USDT address');
+      try {
+        handleFirestoreError(error, OperationType.UPDATE, `users/${auth.currentUser?.uid}`);
+      } catch (err: any) {
+        const errData = JSON.parse(err.message);
+        toast.error(`Failed to add USDT: ${errData.error}`);
+      }
     } finally {
       setLoading(false);
     }

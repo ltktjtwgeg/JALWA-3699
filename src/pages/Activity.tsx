@@ -11,11 +11,11 @@ export default function Activity() {
   const { user } = useAuth();
 
   const activityIcons = [
-    { icon: Trophy, label: 'Activity Award', color: 'bg-orange-500' },
-    { icon: Users, label: 'Invitation bonus', color: 'bg-blue-500' },
-    { icon: TrendingUp, label: 'Betting rebate', color: 'bg-yellow-500' },
-    { icon: Trophy, label: 'Super Jackpot', color: 'bg-emerald-500' },
-    { icon: Gift, label: 'First gift', color: 'bg-purple-500' },
+    { icon: Trophy, label: 'Activity Award', color: 'bg-orange-500', path: '/activity/award' },
+    { icon: Users, label: 'Invitation bonus', color: 'bg-blue-500', path: '/activity/invitation-bonus' },
+    { icon: TrendingUp, label: 'Betting rebate', color: 'bg-yellow-500', path: '/activity/rebate' },
+    { icon: Trophy, label: 'Super Jackpot', color: 'bg-emerald-500', path: '/activity/jackpot' },
+    { icon: Gift, label: 'First gift', color: 'bg-purple-500', path: '/activity/first-gift' },
   ];
 
   const banners = [
@@ -59,7 +59,7 @@ export default function Activity() {
             </div>
             <div className="text-center flex-1">
               <p className="text-[10px] text-white/70 uppercase font-bold mb-1">Total bonus</p>
-              <h2 className="text-xl font-black">₹236.10</h2>
+              <h2 className="text-xl font-black">₹0.00</h2>
             </div>
           </div>
           <button className="w-full bg-indigo-900/40 backdrop-blur-md border border-white/20 py-2.5 rounded-full text-sm font-bold hover:bg-indigo-900/60 transition-all">
@@ -71,7 +71,11 @@ export default function Activity() {
       {/* Activity Icons Grid */}
       <div className="px-4 py-6 grid grid-cols-4 gap-y-8">
         {activityIcons.map((item, idx) => (
-          <div key={idx} className="flex flex-col items-center gap-2">
+          <div 
+            key={idx} 
+            className="flex flex-col items-center gap-2 cursor-pointer active:scale-95 transition-transform"
+            onClick={() => navigate(item.path)}
+          >
             <div className={`${item.color} w-12 h-12 rounded-xl flex items-center justify-center shadow-lg shadow-black/20`}>
               <item.icon className="w-6 h-6 text-white" />
             </div>

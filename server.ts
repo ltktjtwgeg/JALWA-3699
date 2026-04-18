@@ -17,14 +17,29 @@ const firebaseConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'firebase
 
 // Initialize Firebase Admin
 if (admin.apps.length === 0) {
-  admin.initializeApp();
+  admin.initializeApp({
+    projectId: firebaseConfig.projectId
+  });
 }
 const dbInstance = getFirestore(firebaseConfig.firestoreDatabaseId);
 
-// Check if MySQL is configured
-const isMysqlEnabled = !!process.env.DB_HOST;
+// Check if MySQL is configured and reachable
+let isMysqlEnabled = !!process.env.DB_HOST && !!process.env.DB_USER && !!process.env.DB_NAME;
+
+async function checkMysqlConnection() {
+  if (!isMysqlEnabled) return false;
+  try {
+    const { query: testQuery } = await import('./src/lib/mysql');
+    await testQuery('SELECT 1');
+    return true;
+  } catch (err) {
+    console.error('MySQL Connection Failed. Falling back to Firebase mode.', (err as any).message);
+    return false;
+  }
+}
 
 async function startServer() {
+  isMysqlEnabled = await checkMysqlConnection();
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
@@ -79,14 +94,40 @@ async function startServer() {
             else if (bet.selection === 'Small' && resSize === 'Small') { isWin = true; multiplier = 2; }
             else if (!isNaN(Number(bet.selection)) && Number(bet.selection) === resNum) { isWin = true; multiplier = 9; }
 
+            const winAmount = isWin ? bet.amount * multiplier : 0;
+            const status = isWin ? 'win' : 'lost';
+
+            // Update MySQL
             if (isWin) {
-              const winAmount = bet.amount * multiplier;
               await query('UPDATE users SET balance = balance + ? WHERE uid = ?', [winAmount, bet.uid]);
               await query('UPDATE bets SET status = "win", win_amount = ? WHERE id = ?', [winAmount, bet.id]);
               await query('INSERT INTO transactions (uid, type, amount, status, description) VALUES (?, "win", ?, "completed", ?)', 
                 [bet.uid, winAmount, `Win on ${bet.selection} (Period: ${periodId})`]);
             } else {
               await query('UPDATE bets SET status = "lost" WHERE id = ?', [bet.id]);
+            }
+
+            // Real-time Sync with Firestore
+            try {
+              const userRef = dbInstance.collection('users').doc(bet.uid);
+              if (isWin) {
+                await userRef.update({ balance: admin.firestore.FieldValue.increment(winAmount) });
+              }
+
+              // Update the corresponding Firestore bet if it exists
+              const firestoreBets = await dbInstance.collection('bets')
+                .where('uid', '==', bet.uid)
+                .where('periodId', '==', periodId)
+                .where('selection', '==', bet.selection)
+                .where('status', '==', 'pending')
+                .limit(1)
+                .get();
+
+              if (!firestoreBets.empty) {
+                await firestoreBets.docs[0].ref.update({ status, winAmount });
+              }
+            } catch (fsErr) {
+              console.error('Firestore sync error during settlement:', fsErr);
             }
           }
         } else {
@@ -171,7 +212,23 @@ async function startServer() {
               }
               if (remainingTime <= 0 && round.status === 'running') {
                 await query('UPDATE game_rounds SET status = "completed" WHERE id = ?', [round.id]);
+                
+                // Sync Completed Round to Firestore for History
                 if (round.result_number !== null) {
+                  try {
+                    await dbInstance.collection('games').doc(`${type}_${roundId}`).set({
+                      periodId: roundId,
+                      gameType: type,
+                      resultNumber: round.result_number,
+                      resultColor: round.result_color,
+                      resultSize: round.result_size,
+                      status: 'completed',
+                      createdAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+                  } catch (fsErr) {
+                    console.error('Firestore game sync error:', fsErr);
+                  }
+
                   await settleBets(type, roundId, { 
                     resultNumber: round.result_number, 
                     resultColor: round.result_color, 
@@ -245,11 +302,41 @@ async function startServer() {
       try {
         const [userRows] = await query('SELECT balance FROM users WHERE uid = ?', [uid]) as any;
         if (!userRows || userRows[0].balance < amount) return res.status(400).json({ error: 'Insufficient balance' });
+        
+        // Update MySQL
         await query('UPDATE users SET balance = balance - ? WHERE uid = ?', [amount, uid]);
-        await query('INSERT INTO bets (uid, round_id, game_type, selection, amount, status) VALUES (?, ?, ?, ?, ?, "pending")', [uid, roundId, gameType, selection, amount]);
+        const [betResult] = await query('INSERT INTO bets (uid, round_id, game_type, selection, amount, status) VALUES (?, ?, ?, ?, ?, "pending")', [uid, roundId, gameType, selection, amount]) as any;
         await query('INSERT INTO transactions (uid, type, amount, status, description) VALUES (?, "bet", ?, "completed", ?)', [uid, amount, `Bet on ${selection}`]);
+
+        // Sync with Firestore for real-time updates
+        const userRef = dbInstance.collection('users').doc(uid);
+        const userDoc = await userRef.get();
+        const currentTurnover = userDoc.data()?.requiredTurnover || 0;
+
+        await userRef.update({
+          balance: admin.firestore.FieldValue.increment(-amount),
+          totalBets: admin.firestore.FieldValue.increment(amount),
+          dailyBets: admin.firestore.FieldValue.increment(amount),
+          requiredTurnover: Math.max(0, currentTurnover - amount)
+        });
+
+        // Add bet to Firestore for real-time history
+        await dbInstance.collection('bets').add({
+          uid,
+          periodId: roundId,
+          gameType,
+          selection,
+          amount,
+          status: 'pending',
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          mysqlId: betResult.insertId // Link back if needed
+        });
+
         res.json({ success: true });
-      } catch (err) { res.status(500).json({ error: 'Betting failed' }); }
+      } catch (err) { 
+        console.error('Betting failed:', err);
+        res.status(500).json({ error: 'Betting failed' }); 
+      }
     });
 
     // Sync User API (For MySQL)

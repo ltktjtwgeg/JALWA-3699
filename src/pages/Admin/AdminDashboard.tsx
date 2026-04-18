@@ -29,7 +29,22 @@ import {
   Trash2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getAdminStats, getSystemSettings, updateSystemSettings, SystemSettings, getGamePoolStats, setGameControl, createGiftCode, getGiftCodes, deleteGiftCode } from '../../services/adminService';
+import { 
+  getAdminStats, 
+  getSystemSettings, 
+  updateSystemSettings, 
+  SystemSettings, 
+  getGamePoolStats, 
+  setGameControl, 
+  createGiftCode, 
+  getGiftCodes, 
+  deleteGiftCode,
+  getPendingTransactions,
+  updateTransactionStatus,
+  setMinesControl,
+  setRouletteControl,
+  getUsers
+} from '../../services/adminService';
 import { formatCurrency, cn } from '../../lib/utils';
 import { toast } from 'sonner';
 import { db } from '../../firebase';
@@ -100,7 +115,6 @@ export default function AdminDashboard() {
     { label: "Today's Recharge", value: formatCurrency(stats?.todayRecharge || 0), sub: 'View Details', icon: ArrowDownCircle, color: 'bg-purple-600', view: 'Deposit Update' },
     { label: "Today's Withdrawal", value: formatCurrency(stats?.todayWithdrawal || 0), sub: 'View Details', icon: ArrowUpCircle, color: 'bg-purple-600', view: 'Withdraw Sent' },
     { label: 'User Balance', value: formatCurrency(stats?.totalBalance || 0), sub: 'View Details', icon: Wallet, color: 'bg-purple-600', view: 'Users' },
-    { label: 'Total Users', value: stats?.totalUsers, sub: 'View Details', icon: Users, color: 'bg-purple-600', view: 'Users' },
     { label: 'Pending Recharge', value: formatCurrency(stats?.pendingRecharge || 0), sub: 'View Details', icon: Clock, color: 'bg-purple-600', view: 'Deposit Update' },
     { label: 'Success Recharge', value: stats?.successRecharge, sub: 'View Details', icon: CheckCircle2, color: 'bg-purple-600', view: 'Deposit Update' },
     { label: 'Total Withdrawal', value: formatCurrency(stats?.totalWithdrawal || 0), sub: 'View Details', icon: DollarSign, color: 'bg-purple-600', view: 'Withdraw Sent' },
@@ -149,23 +163,13 @@ export default function AdminDashboard() {
           />
 
           <MenuSection 
-            icon={TrendingUp} 
-            label="K3 Manager" 
+            icon={Gamepad2} 
+            label="Casino Manager" 
             sidebarOpen={sidebarOpen}
-            isOpen={expandedMenus.includes('K3')}
-            onClick={() => toggleMenu('K3')}
+            isOpen={expandedMenus.includes('Casino')}
+            onClick={() => toggleMenu('Casino')}
             onItemClick={(item: string) => setCurrentView(item)}
-            items={['K3 Game Settings', 'K3 History']}
-          />
-
-          <MenuSection 
-            icon={Globe} 
-            label="5D Manager" 
-            sidebarOpen={sidebarOpen}
-            isOpen={expandedMenus.includes('5D')}
-            onClick={() => toggleMenu('5D')}
-            onItemClick={(item: string) => setCurrentView(item)}
-            items={['5D Game Settings', '5D History']}
+            items={['Mines Control', 'Roulette Control', 'Casino Status']}
           />
 
           <MenuSection 
@@ -200,7 +204,7 @@ export default function AdminDashboard() {
             onClick={() => toggleMenu('Manage')}
             onItemClick={(item: string) => setCurrentView(item)}
             items={[
-               'Users', 'Daily Salary', 'Gift Code', 'Telegram', 
+               'Users', 'Daily Salary', 'Gift Code', 'Banner Settings', 'Popup Settings', 'Telegram', 
                'Add Admin', 'Demo User', 'Agent User', 'Edit Bank Details',
                'Withdrawal Limit', 'First Deposit Bonus', 'Update Game Commission',
                'Update Turnover', 'Add Advanced Functions', 'Hold Wallet', 'Get User Report'
@@ -269,12 +273,19 @@ export default function AdminDashboard() {
               ))}
             </div>
           ) : (
-            <AdminSubView 
-               view={currentView} 
-               settings={settings!} 
-               updateSetting={handleUpdateSetting}
-               onBack={() => setCurrentView('dashboard')} 
-            />
+            settings ? (
+              <AdminSubView 
+                 view={currentView} 
+                 settings={settings} 
+                 updateSetting={handleUpdateSetting}
+                 onBack={() => setCurrentView('dashboard')} 
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center py-20 bg-white rounded-3xl shadow-xl">
+                 <RefreshCw className="w-12 h-12 text-[#7c3aed] animate-spin mb-4" />
+                 <p className="text-gray-500 font-bold uppercase tracking-widest">Loading Settings...</p>
+              </div>
+            )
           )}
         </main>
       </div>
@@ -289,6 +300,9 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
   const [poolStats, setPoolStats] = React.useState<Record<string, any>>({});
   const [giftCodes, setGiftCodes] = React.useState<any[]>([]);
   const [newGift, setNewGift] = React.useState({ code: '', amount: 10, maxUses: 100 });
+  const [pendingTrans, setPendingTrans] = React.useState<any[]>([]);
+  const [minesConfig, setMinesConfig] = React.useState({ targetUser: 'global', mines: '' });
+  const [rouletteConfig, setRouletteConfig] = React.useState({ targetUser: 'global', number: 0 });
 
   const handleCreateGift = async () => {
     if (!newGift.code) return toast.error('Enter code');
@@ -328,12 +342,60 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
     }
   };
 
+  const fetchTransactions = async (type: 'deposit' | 'withdraw') => {
+    setLoading(true);
+    try {
+      const data = await getPendingTransactions(type);
+      setPendingTrans(data);
+    } catch (e) {
+      toast.error('Failed to load transactions');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTransAction = async (id: string, status: 'completed' | 'rejected', uid: string) => {
+    try {
+      await updateTransactionStatus(id, status, uid);
+      toast.success(`Transaction ${status}`);
+      fetchTransactions(view.includes('Deposit') ? 'deposit' : 'withdraw');
+    } catch (e) {
+      toast.error('Failed to update transaction');
+    }
+  };
+
+  const handleMinesControl = async () => {
+    try {
+      const minePositions = minesConfig.mines.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+      await setMinesControl(minesConfig.targetUser, minePositions);
+      toast.success('Mines control scheduled');
+      setMinesConfig({ targetUser: 'global', mines: '' });
+    } catch (e) {
+      toast.error('Failed to schedule Mines control');
+    }
+  };
+
+  const handleRouletteControl = async () => {
+    try {
+      await setRouletteControl(rouletteConfig.targetUser, rouletteConfig.number);
+      toast.success('Roulette control scheduled');
+    } catch (e) {
+      toast.error('Failed to schedule Roulette control');
+    }
+  };
+
   React.useEffect(() => {
     if (view === 'Users') {
       fetchUsers();
     }
     if (view === 'Gift Code') {
       fetchGiftCodes();
+    }
+    if (view === 'Deposit Update') {
+      fetchTransactions('deposit');
+    }
+    if (view === 'Withdraw Apply') {
+      fetchTransactions('withdraw');
     }
     if (view === 'Game Settings') {
       const fetchPool = async () => {
@@ -386,7 +448,12 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
                  onChange={(e) => setSearchTerm(e.target.value)}
                  className="flex-1 bg-transparent py-2 outline-none text-sm font-bold"
               />
-              <button className="bg-[#7c3aed] text-white px-6 py-2 rounded-xl font-bold text-xs uppercase tracking-tighter">Search</button>
+              <button 
+                onClick={fetchUsers}
+                className="bg-[#7c3aed] text-white px-6 py-2 rounded-xl font-bold text-xs uppercase tracking-tighter"
+              >
+                Search
+              </button>
             </div>
             
             <div className="overflow-x-auto">
@@ -413,7 +480,332 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
                 </tbody>
               </table>
             </div>
+            {/* Pagination Placeholder */}
+            <div className="flex items-center justify-center gap-2 pt-4">
+               {[1,2,3,4,5,6,7,8,9,10].map(p => (
+                 <button key={p} className="w-8 h-8 rounded-lg bg-gray-100 text-[10px] font-black hover:bg-[#7c3aed] hover:text-white transition-all">
+                   {p}
+                 </button>
+               ))}
+            </div>
           </div>
+        )}
+
+        {view === 'Popup Settings' && (
+          <div className="space-y-6">
+            <div className="bg-white p-8 rounded-[40px] border border-gray-100 shadow-sm">
+               <h3 className="text-sm font-black text-[#7c3aed] uppercase tracking-widest mb-6">Login Popup Settings</h3>
+               <div className="space-y-6">
+                  <div className="space-y-2">
+                     <label className="text-[10px] font-black text-gray-400 uppercase ml-1">Popup Banner URL (Leave empty for default bonus popup)</label>
+                     <input 
+                      type="text" 
+                      value={settings.popupBannerUrl || ''}
+                      onChange={e => updateSetting('popupBannerUrl', e.target.value)}
+                      placeholder="https://..."
+                      className="w-full p-4 bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
+                     />
+                  </div>
+                  <div className="flex items-center justify-between">
+                     <div className="flex flex-col">
+                        <span className="text-xs font-black text-gray-700 uppercase tracking-tighter">Enable Popup</span>
+                        <span className="text-[10px] text-gray-400 font-bold">Show popup to users when they login today</span>
+                     </div>
+                     <button 
+                        onClick={() => updateSetting('showPopup', !settings.showPopup)}
+                        className={cn(
+                          "w-12 h-6 rounded-full p-1 transition-colors relative",
+                          settings.showPopup ? "bg-emerald-500" : "bg-gray-300"
+                        )}
+                      >
+                         <div className={cn(
+                            "w-4 h-4 bg-white rounded-full shadow-md transition-transform",
+                            settings.showPopup ? "translate-x-6" : "translate-x-0"
+                         )} />
+                      </button>
+                  </div>
+               </div>
+            </div>
+            {settings.popupBannerUrl && (
+              <div className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm max-w-xs mx-auto text-center">
+                 <p className="text-[10px] font-black text-gray-400 uppercase mb-2">Preview</p>
+                 <img src={settings.popupBannerUrl} alt="Popup Preview" className="w-full rounded-2xl shadow-lg" />
+              </div>
+            )}
+          </div>
+        )}
+
+        {view === 'Banner Settings' && (
+          <div className="space-y-8">
+            <div className="bg-gray-50 p-6 rounded-3xl border border-gray-100">
+               <h3 className="text-sm font-black text-[#7c3aed] uppercase tracking-widest mb-4">Add New Banner</h3>
+               <div className="flex gap-4">
+                  <input 
+                    type="text" 
+                    placeholder="Enter Image URL..."
+                    id="new-banner-url"
+                    className="flex-1 p-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
+                  />
+                  <button 
+                    onClick={() => {
+                      const input = document.getElementById('new-banner-url') as HTMLInputElement;
+                      if (!input.value) return toast.error('Enter URL');
+                      const newBanners = [...(settings.banners || []), { id: Date.now().toString(), image: input.value }];
+                      updateSetting('banners', newBanners);
+                      input.value = '';
+                    }}
+                    className="bg-[#7c3aed] text-white px-8 py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-lg"
+                  >
+                    Add Banner
+                  </button>
+               </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {(settings.banners || []).map((banner: any, index: number) => (
+                <div key={banner.id} className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm relative group">
+                  <img 
+                    src={banner.image} 
+                    alt="Banner" 
+                    className="w-full h-32 object-cover rounded-2xl mb-4"
+                    onError={(e) => e.currentTarget.src = 'https://picsum.photos/seed/error/800/400'}
+                  />
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">Banner #{index + 1}</span>
+                    <button 
+                      onClick={() => {
+                        const newBanners = (settings.banners || []).filter((b: any) => b.id !== banner.id);
+                        updateSetting('banners', newBanners);
+                      }}
+                      className="text-rose-500 hover:bg-rose-50 p-2 rounded-xl"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {view === 'Deposit Update' && (
+          <div className="space-y-6">
+            <h3 className="text-sm font-black text-emerald-500 uppercase tracking-widest">Pending Deposit Requests</h3>
+            <div className="grid grid-cols-1 gap-4">
+              {pendingTrans.map((tx) => (
+                <div key={tx.id} className="bg-gray-50 p-6 rounded-[32px] border border-gray-100 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm">
+                      <ArrowDownCircle className="w-6 h-6 text-emerald-500" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-black text-gray-800">₹{tx.amount}</p>
+                      <p className="text-[10px] text-gray-400 font-bold">UID: {tx.uid}</p>
+                      <p className="text-[10px] text-gray-400">Time: {tx.createdAt?.toDate().toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => handleTransAction(tx.id, 'rejected', tx.uid)}
+                      className="bg-rose-500/10 text-rose-500 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all"
+                    >
+                      Reject
+                    </button>
+                    <button 
+                      onClick={() => handleTransAction(tx.id, 'completed', tx.uid)}
+                      className="bg-emerald-500 text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-emerald-500/20 hover:translate-y-[-2px] transition-all"
+                    >
+                      Approve
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {pendingTrans.length === 0 && (
+                <div className="py-20 text-center bg-gray-50 rounded-[32px] border-2 border-dashed border-gray-100">
+                  <p className="text-xs font-black text-gray-300 uppercase italic tracking-widest">No pending deposits</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {view === 'Withdraw Apply' && (
+          <div className="space-y-6">
+            <h3 className="text-sm font-black text-orange-500 uppercase tracking-widest">Pending Withdrawal Requests</h3>
+            <div className="grid grid-cols-1 gap-4">
+              {pendingTrans.map((tx) => (
+                <div key={tx.id} className="bg-gray-50 p-6 rounded-[32px] border border-gray-100 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm">
+                      <ArrowUpCircle className="w-6 h-6 text-orange-500" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-black text-gray-800">₹{tx.amount}</p>
+                      <p className="text-[10px] text-gray-400 font-bold">UID: {tx.uid}</p>
+                      <p className="text-[10px] text-gray-400">Method: {tx.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => handleTransAction(tx.id, 'rejected', tx.uid)}
+                      className="bg-rose-500/10 text-rose-500 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all"
+                    >
+                      Reject
+                    </button>
+                    <button 
+                      onClick={() => handleTransAction(tx.id, 'completed', tx.uid)}
+                      className="bg-[#7c3aed] text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-purple-500/20 hover:translate-y-[-2px] transition-all"
+                    >
+                      Set Success
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {pendingTrans.length === 0 && (
+                <div className="py-20 text-center bg-gray-50 rounded-[32px] border-2 border-dashed border-gray-100">
+                  <p className="text-xs font-black text-gray-300 uppercase italic tracking-widest">No pending withdrawals</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {view === 'Mines Control' && (
+          <div className="space-y-8">
+            <div className="bg-gray-50 p-8 rounded-[40px] border border-gray-100">
+              <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-6">Mines Outcome Control</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Target User (Username or 'global')</label>
+                  <input 
+                    type="text" 
+                    value={minesConfig.targetUser}
+                    onChange={e => setMinesConfig({...minesConfig, targetUser: e.target.value})}
+                    placeholder="Username"
+                    className="w-full p-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Target Mines Positions (0-24, comma separated)</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. 0,1,2"
+                    value={minesConfig.mines}
+                    onChange={e => setMinesConfig({...minesConfig, mines: e.target.value})}
+                    className="w-full p-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold font-mono"
+                  />
+                </div>
+              </div>
+              <button 
+                onClick={handleMinesControl}
+                className="mt-6 w-full bg-black text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl hover:translate-y-[-2px] transition-all"
+              >
+                Schedule Forced Mine Setup
+              </button>
+            </div>
+            <div className="p-6 bg-blue-50 rounded-3xl border border-blue-100">
+               <p className="text-xs text-blue-800 font-bold leading-relaxed">
+                  Tip: If you want a user to LOSE, place a bomb on any of the early tiles they are likely to click.
+               </p>
+            </div>
+          </div>
+        )}
+
+        {view === 'Roulette Control' && (
+          <div className="space-y-8">
+            <div className="bg-gray-50 p-8 rounded-[40px] border border-gray-100">
+              <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-6">Roulette Outcome Control</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                   <label className="text-[10px] font-black text-gray-400 uppercase ml-1">Target User</label>
+                   <input 
+                    type="text" 
+                    value={rouletteConfig.targetUser}
+                    onChange={e => setRouletteConfig({...rouletteConfig, targetUser: e.target.value})}
+                    className="w-full p-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
+                   />
+                </div>
+                <div className="space-y-2">
+                   <label className="text-[10px] font-black text-gray-400 uppercase ml-1">Result Number (0-12)</label>
+                   <input 
+                    type="number" 
+                    min={0}
+                    max={12}
+                    value={rouletteConfig.number}
+                    onChange={e => setRouletteConfig({...rouletteConfig, number: parseInt(e.target.value)})}
+                    className="w-full p-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
+                   />
+                </div>
+              </div>
+              <button 
+                onClick={handleRouletteControl}
+                className="mt-6 w-full bg-[#7c3aed] text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl hover:translate-y-[-2px] transition-all"
+              >
+                Schedule Next Spin Result
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === 'Casino Status' && (
+           <div className="space-y-8">
+              <div className="bg-gray-50 p-8 rounded-[40px] border border-gray-100 shadow-sm">
+                 <div className="flex items-center justify-between mb-6">
+                   <h3 className="text-sm font-black text-[#7c3aed] uppercase tracking-widest">Casino Games Visibility Control</h3>
+                   {Object.keys(settings?.gameStatuses || {}).length === 0 && (
+                     <button 
+                       onClick={() => {
+                         const defaults = {
+                           '1m': true, '30s': true, '3m': true, '5m': true,
+                           'mines': true, 'roulette': true, 'wingo': true,
+                           'k3': false, '5d': false, 'trx': false
+                         };
+                         updateSetting('gameStatuses', defaults);
+                       }}
+                       className="text-[10px] font-black uppercase text-[#7c3aed] hover:underline"
+                     >
+                       Initialize Defaults
+                     </button>
+                   )}
+                 </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {Object.entries(settings?.gameStatuses || {}).length === 0 ? (
+                      <div className="col-span-full py-12 text-center text-gray-400 font-bold uppercase text-xs">
+                         No games configured. Click "Initialize Defaults" above.
+                      </div>
+                    ) : (
+                      Object.entries(settings?.gameStatuses || {}).map(([gameId, isActive]) => (
+                         <div key={gameId} className="bg-white p-6 rounded-3xl border border-gray-100 flex items-center justify-between shadow-sm group hover:border-[#7c3aed] transition-all">
+                            <div>
+                               <p className="text-xs font-black text-gray-800 uppercase tracking-tighter italic">{gameId}</p>
+                               <p className={cn(
+                                  "text-[10px] font-bold uppercase",
+                                  isActive ? "text-emerald-500" : "text-rose-500"
+                               )}>
+                                  Status: {isActive ? 'Live (Continue)' : 'Off (Upcoming)'}
+                               </p>
+                            </div>
+                            <button 
+                               onClick={() => {
+                                  const newStatuses = { ...(settings?.gameStatuses || {}), [gameId]: !isActive };
+                                  updateSetting('gameStatuses', newStatuses);
+                               }}
+                              className={cn(
+                                "w-12 h-6 rounded-full p-1 transition-colors relative",
+                                isActive ? "bg-emerald-500" : "bg-gray-300"
+                              )}
+                            >
+                               <div className={cn(
+                                  "w-4 h-4 bg-white rounded-full shadow-md transition-transform",
+                                  isActive ? "translate-x-6" : "translate-x-0"
+                               )} />
+                            </button>
+                         </div>
+                      ))
+                    )}
+                 </div>
+              </div>
+           </div>
         )}
 
         {view === 'Random ON/OFF' && (
@@ -421,18 +813,18 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
             <p className="text-sm text-gray-500">Enable or disable random result generation for Wingo games.</p>
             <div className="flex items-center gap-4">
                <button 
-                  onClick={() => updateSetting('wingoRandomMode', !settings.wingoRandomMode)}
+                  onClick={() => updateSetting('wingoRandomMode', !settings?.wingoRandomMode)}
                   className={cn(
                     "w-20 h-10 rounded-full p-1 transition-colors relative",
-                    settings.wingoRandomMode ? "bg-[#7c3aed]" : "bg-gray-300"
+                    settings?.wingoRandomMode ? "bg-[#7c3aed]" : "bg-gray-300"
                   )}
                >
                   <div className={cn(
                     "w-8 h-8 bg-white rounded-full shadow-md transition-transform",
-                    settings.wingoRandomMode ? "translate-x-10" : "translate-x-0"
+                    settings?.wingoRandomMode ? "translate-x-10" : "translate-x-0"
                   )} />
                </button>
-               <span className="font-bold text-gray-700">{settings.wingoRandomMode ? 'System is in Random Mode' : 'Random Mode Disabled'}</span>
+               <span className="font-bold text-gray-700">{settings?.wingoRandomMode ? 'System is in Random Mode' : 'Random Mode Disabled'}</span>
             </div>
           </div>
         )}
@@ -442,24 +834,58 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
             <p className="text-sm text-gray-500">If ON, the game will automatically select the result where users have bet the LEAST amount of money.</p>
             <div className="flex items-center gap-4">
                <button 
-                  onClick={() => updateSetting('wingoAutoControl', !settings.wingoAutoControl)}
+                  onClick={() => updateSetting('wingoAutoControl', !settings?.wingoAutoControl)}
                   className={cn(
                     "w-20 h-10 rounded-full p-1 transition-colors relative",
-                    settings.wingoAutoControl ? "bg-[#7c3aed]" : "bg-gray-300"
+                    settings?.wingoAutoControl ? "bg-[#7c3aed]" : "bg-gray-300"
                   )}
                >
                   <div className={cn(
                     "w-8 h-8 bg-white rounded-full shadow-md transition-transform",
-                    settings.wingoAutoControl ? "translate-x-10" : "translate-x-0"
+                    settings?.wingoAutoControl ? "translate-x-10" : "translate-x-0"
                   )} />
                </button>
-               <span className="font-bold text-gray-700">{settings.wingoAutoControl ? 'Auto Control is ACTIVE' : 'Auto Control is INACTIVE'}</span>
+               <span className="font-bold text-gray-700">{settings?.wingoAutoControl ? 'Auto Control is ACTIVE' : 'Auto Control is INACTIVE'}</span>
             </div>
           </div>
         )}
 
         {view === 'Game Settings' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="space-y-6">
+            <div className="bg-[#7c3aed]/5 p-6 rounded-[32px] border border-[#7c3aed]/20 flex flex-wrap gap-4 items-center justify-between">
+               <div>
+                  <h3 className="text-sm font-black text-[#7c3aed] uppercase tracking-widest">Global Wingo Control</h3>
+                  <p className="text-[10px] text-gray-400 font-bold uppercase italic">Switch between fully random and house-favorable modes</p>
+               </div>
+               <div className="flex gap-2">
+                  <button 
+                    onClick={() => {
+                      updateSetting('wingoRandomMode', true);
+                      updateSetting('wingoAutoControl', false);
+                    }}
+                    className={cn(
+                      "px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg",
+                      settings?.wingoRandomMode ? "bg-[#7c3aed] text-white shadow-purple-500/20" : "bg-white text-gray-400 hover:bg-gray-50"
+                    )}
+                  >
+                    Random Mode
+                  </button>
+                  <button 
+                    onClick={() => {
+                      updateSetting('wingoRandomMode', false);
+                      updateSetting('wingoAutoControl', true);
+                    }}
+                    className={cn(
+                      "px-6 py-3 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg",
+                      settings?.wingoAutoControl ? "bg-orange-500 text-white shadow-orange-500/20" : "bg-white text-gray-400 hover:bg-gray-50"
+                    )}
+                  >
+                    Manual (Least Amount)
+                  </button>
+               </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
              {['30s', '1m', '3m', '5m'].map((type) => {
                 const pool = poolStats[type] || { total: 0, Big: 0, Small: 0, Red: 0, Green: 0, Violet: 0, numbers: Array(10).fill(0) };
                 return (
@@ -540,14 +966,15 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
                 );
              })}
           </div>
-        )}
+        </div>
+      )}
 
-        {view === 'Add UPI' && (
+      {view === 'Add UPI' && (
            <div className="space-y-6">
               <p className="text-xs text-gray-400 font-bold uppercase">Update UPI ID for Deposits</p>
               <input 
                  type="text" 
-                 value={settings.upiId}
+                 value={settings?.upiId || ''}
                  onChange={(e) => updateSetting('upiId', e.target.value)}
                  placeholder="yourname@upi"
                  className="w-full max-w-md p-4 bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
@@ -563,7 +990,7 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
                  <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-[#7c3aed]">₹</span>
                  <input 
                     type="number" 
-                    value={settings.usdtRate}
+                    value={settings?.usdtRate || 0}
                     onChange={(e) => updateSetting('usdtRate', parseFloat(e.target.value))}
                     className="w-full pl-10 pr-4 py-4 bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed]"
                  />
@@ -579,7 +1006,7 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
               <div className="flex items-center gap-4">
                  <input 
                     type="number" 
-                    value={settings.salaryBonus}
+                    value={settings?.salaryBonus || 0}
                     onChange={(e) => updateSetting('salaryBonus', parseFloat(e.target.value))}
                     className="flex-1 max-w-xs p-4 bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
                  />
@@ -594,7 +1021,7 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
               <div className="flex items-center gap-4">
                  <input 
                     type="number" 
-                    value={settings.withdrawLimit}
+                    value={settings?.withdrawLimit || 0}
                     onChange={(e) => updateSetting('withdrawLimit', parseFloat(e.target.value))}
                     className="flex-1 max-w-xs p-4 bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
                  />
@@ -609,7 +1036,7 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
               <div className="flex items-center gap-4">
                  <input 
                     type="number" 
-                    value={settings.commissionRate * 100}
+                    value={(settings?.commissionRate || 0) * 100}
                     onChange={(e) => updateSetting('commissionRate', parseFloat(e.target.value) / 100)}
                     className="flex-1 max-w-xs p-4 bg-gray-50 border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
                  />
