@@ -165,6 +165,7 @@ export default function GamePage() {
     { id: '1m', label: 'WinGo 1 Min' },
     { id: '3m', label: 'WinGo 3 Min' },
     { id: '5m', label: 'WinGo 5 Min' },
+    { id: 'ladder', label: 'Ladder 1m' },
   ];
 
   const multipliers = ['Random', 1, 5, 10, 20, 50, 100];

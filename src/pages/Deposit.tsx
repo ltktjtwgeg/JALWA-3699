@@ -39,18 +39,27 @@ export default function Deposit() {
     
     setLoading(true);
     try {
-      // Calculate Bonus
+      // 1. Calculate First Deposit Bonus
       let bonus = 0;
-      if (user.totalDeposits === 0) { // First deposit bonus
+      if (!user.totalDeposits || user.totalDeposits === 0) { 
         if (depositAmount >= 1000) bonus = 188;
         else if (depositAmount >= 500) bonus = 108;
         else if (depositAmount >= 300) bonus = 28;
         else if (depositAmount >= 100) bonus = 18;
       }
 
+      // 2. Calculate Method Bonus (ARPay +2%)
+      let methodBonus = 0;
+      if (depositMethod === 'arpay') {
+        methodBonus = Math.floor(depositAmount * 0.02);
+      }
+
+      const totalBonus = bonus + methodBonus;
+      const totalToCredit = depositAmount + totalBonus;
+
       // Update balance and total deposits
       await updateDoc(doc(db, 'users', user.uid), {
-        balance: increment(depositAmount + bonus),
+        balance: increment(totalToCredit),
         totalDeposits: increment(depositAmount),
         dailyDeposits: increment(depositAmount),
         requiredTurnover: increment(depositAmount)
@@ -60,9 +69,9 @@ export default function Deposit() {
       await addDoc(collection(db, 'transactions'), {
         uid: user.uid,
         type: 'deposit',
-        amount: depositAmount + bonus,
+        amount: totalToCredit,
         status: 'completed',
-        description: `Deposit via ${depositMethod.toUpperCase()} (${depositChannel})${bonus > 0 ? ` + Bonus ₹${bonus}` : ''}`,
+        description: `Deposit via ${depositMethod.toUpperCase()} (${depositChannel})${bonus > 0 ? ` + Welcome Bonus ₹${bonus}` : ''}${methodBonus > 0 ? ` + ARPay Bonus ₹${methodBonus}` : ''}`,
         createdAt: serverTimestamp()
       });
 

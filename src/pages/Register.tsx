@@ -14,13 +14,18 @@ export default function Register() {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [inviteCode, setInviteCode] = useState(searchParams.get('invitationCode') || '');
+  const [inviteCode, setInviteCode] = useState(() => {
+    return searchParams.get('invitationCode') || 
+           searchParams.get('inviteCode') || 
+           sessionStorage.getItem('pendingInvitationCode') || 
+           '';
+  });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
-    const ref = searchParams.get('invitationCode');
+    const ref = searchParams.get('invitationCode') || searchParams.get('inviteCode');
     if (ref) {
       setInviteCode(ref);
     }
@@ -29,7 +34,11 @@ export default function Register() {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     const identifier = registerMethod === 'email' ? email : phone;
+    const finalInviteCode = inviteCode.trim();
+
     if (!identifier || !password || !confirmPassword) return toast.error('Please fill all fields');
+    if (finalInviteCode && finalInviteCode.length > 20) return toast.error('Invalid invite code');
+
     if (registerMethod === 'phone' && (identifier.length < 10 || identifier.length > 15)) return toast.error('Phone number must be between 10 and 15 digits');
     if (password !== confirmPassword) return toast.error('Passwords do not match');
     if (password.length < 6) return toast.error('Password must be at least 6 characters');
@@ -48,7 +57,7 @@ export default function Register() {
         
         let nextUid = 251500;
         if (counterDoc.exists()) {
-          nextUid = counterDoc.data().lastUid + 1;
+          nextUid = (counterDoc.data()?.lastUid || 251500) + 1;
         }
         
         transaction.set(counterRef, { lastUid: nextUid }, { merge: true });
@@ -71,7 +80,7 @@ export default function Register() {
           dailyBets: 0,
           vipLevel: 0,
           inviteCode: numericUid,
-          invitedBy: inviteCode || null,
+          invitedBy: finalInviteCode || null,
           createdAt: serverTimestamp(),
           lastLoginAt: serverTimestamp(),
           role: 'user',
@@ -80,6 +89,9 @@ export default function Register() {
           claimedInvitationBonuses: []
         });
       });
+      
+      // Clear the pending invitation
+      sessionStorage.removeItem('pendingInvitationCode');
 
       // Sign out immediately after registration so they have to login manually
       await signOut(auth);

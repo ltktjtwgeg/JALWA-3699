@@ -4,7 +4,9 @@ import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Respect the environment variable for database ID if present (common in AI Studio)
+const dbId = (import.meta as any).env?.VITE_FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId;
+export const db = getFirestore(app, dbId);
 export const auth = getAuth(app);
 
 export enum OperationType {

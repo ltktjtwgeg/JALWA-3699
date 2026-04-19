@@ -25,7 +25,7 @@ import {
 import { toast } from 'sonner';
 import BottomNav from '../components/BottomNav';
 import { useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 
 export default function Promotion() {
@@ -34,6 +34,7 @@ export default function Promotion() {
   const [showSubordinates, setShowSubordinates] = useState(false);
   const [subordinateList, setSubordinateList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [totalCommission, setTotalCommission] = useState(0);
   const [stats, setStats] = useState({
     directRegister: 0,
     teamRegister: 0,
@@ -48,8 +49,31 @@ export default function Promotion() {
   useEffect(() => {
     if (user) {
       fetchPromotionData();
+      fetchCommissionData();
     }
   }, [user]);
+
+  const fetchCommissionData = async () => {
+    if (!user) return;
+    try {
+      const q = query(
+        collection(db, 'transactions'),
+        where('uid', '==', user.uid),
+        where('type', '==', 'win')
+      );
+      const snap = await getDocs(q);
+      const total = snap.docs.reduce((acc, doc) => {
+        const data = doc.data();
+        if (data.description && data.description.includes('Referral')) {
+          return acc + (data.amount || 0);
+        }
+        return acc;
+      }, 0);
+      setTotalCommission(total);
+    } catch (error) {
+      console.error('Error fetching commission:', error);
+    }
+  };
 
   const fetchPromotionData = async () => {
     if (!user?.inviteCode) return;
@@ -69,14 +93,11 @@ export default function Promotion() {
       };
 
       // Fetch Level 2
-      let level2Count = 0;
-      let level2Deposits = 0;
-      let level2DepositCount = 0;
+      let level2UsersData: any[] = [];
       
       const level1Codes = level1Users.map((u: any) => u.inviteCode).filter(Boolean);
       if (level1Codes.length > 0) {
-        // Firestore 'in' query limit is 30, so let's chunk if needed or just use multiple queries
-        // For simplicity, let's just do it in chunks of 30
+        // Firestore 'in' query limit is 30
         const chunks = [];
         for (let i = 0; i < level1Codes.length; i += 30) {
           chunks.push(level1Codes.slice(i, i + 30));
@@ -85,28 +106,30 @@ export default function Promotion() {
         for (const chunk of chunks) {
           const q2 = query(collection(db, 'users'), where('invitedBy', 'in', chunk));
           const snap2 = await getDocs(q2);
-          level2Count += snap2.size;
-          snap2.docs.forEach(d => {
-            const data = d.data();
-            level2Deposits += (data.totalDeposits || 0);
-            if ((data.totalDeposits || 0) > 0) level2DepositCount++;
-          });
+          level2UsersData = [...level2UsersData, ...snap2.docs.map(d => d.data())];
         }
       }
 
+      const teamStats = {
+        register: directStats.register + level2UsersData.length,
+        depositCount: directStats.depositCount + level2UsersData.filter((u: any) => (u.totalDeposits || 0) > 0).length,
+        depositAmount: directStats.depositAmount + level2UsersData.reduce((acc, u: any) => acc + (u.totalDeposits || 0), 0),
+        firstDeposit: directStats.firstDeposit + level2UsersData.filter((u: any) => (u.totalDeposits || 0) > 0).length,
+      };
+
       setStats({
         directRegister: directStats.register,
-        teamRegister: directStats.register + level2Count,
+        teamRegister: teamStats.register,
         directDepositCount: directStats.depositCount,
-        teamDepositCount: directStats.depositCount + level2DepositCount,
+        teamDepositCount: teamStats.depositCount,
         directDepositAmount: directStats.depositAmount,
-        teamDepositAmount: directStats.depositAmount + level2Deposits,
+        teamDepositAmount: teamStats.depositAmount,
         directFirstDeposit: directStats.firstDeposit,
-        teamFirstDeposit: directStats.firstDeposit + level2DepositCount,
+        teamFirstDeposit: teamStats.firstDeposit,
       });
     } catch (error) {
       console.error('Error fetching promotion data:', error);
-      toast.error('Failed to load promotion data');
+      // Don't toast error if user just has no permissions yet, but we updated it
     } finally {
       setLoading(false);
     }
@@ -196,9 +219,9 @@ export default function Promotion() {
       <div className="p-6">
         <div className="bg-gradient-to-r from-[#ff9a9e] via-[#fecfef] to-[#feada6] rounded-[32px] p-8 text-center shadow-2xl relative overflow-hidden">
           <div className="relative z-10 flex flex-col items-center">
-            <h1 className="text-5xl font-black text-white drop-shadow-lg mb-4">0</h1>
+            <h1 className="text-5xl font-black text-white drop-shadow-lg mb-4">₹{totalCommission.toFixed(2)}</h1>
             <div className="bg-black/20 backdrop-blur-md px-6 py-2 rounded-full border border-white/30 mb-2">
-              <span className="text-xs font-black text-white uppercase tracking-widest">Yesterday's total commission</span>
+              <span className="text-xs font-black text-white uppercase tracking-widest">Your total commission</span>
             </div>
             <p className="text-[10px] text-white/70 font-bold uppercase tracking-tighter">Upgrade level to increase income</p>
           </div>

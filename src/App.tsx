@@ -180,6 +180,13 @@ function GameManager() {
 
 export default function App() {
   useEffect(() => {
+    // Persist invitation code from URL if present
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('invitationCode') || params.get('inviteCode');
+    if (code) {
+      sessionStorage.setItem('pendingInvitationCode', code);
+    }
+
     async function testConnection() {
       try {
         await getDoc(doc(db, 'test', 'connection'));

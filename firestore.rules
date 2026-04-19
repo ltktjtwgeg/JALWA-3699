@@ -157,8 +157,10 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
       allow list: if isAdmin() || (isAuthenticated() && 
-                    request.query.limit <= 10 && 
-                    (request.query.filters.size() == 1 && 'username' in request.query.filters));
+                    (
+                      (resource.data.invitedBy == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.inviteCode) ||
+                      (request.query.limit <= 10 && 'username' in request.query.filters)
+                    ));
       allow create: if isAuthenticated() && isValidUser(request.resource.data) && 
                       (isOwner(userId) && request.resource.data.get('role', 'user') == 'user' || isAdmin());
       allow update: if isAuthenticated() && isValidUser(request.resource.data) && 

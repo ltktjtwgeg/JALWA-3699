@@ -36,14 +36,26 @@ try {
  */
 if (admin.apps.length === 0) {
   const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || firebaseConfig.projectId;
-  console.log(`Initializing Firebase Admin with Project: ${projectId}`);
+  const serviceAccountVar = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   
   try {
-    admin.initializeApp({
-      projectId: projectId
-    });
+    if (serviceAccountVar) {
+      const serviceAccount = JSON.parse(serviceAccountVar);
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        projectId: projectId
+      });
+      console.log(`Firebase Admin initialized with Service Account JSON for project: ${projectId}`);
+    } else {
+      admin.initializeApp({
+        projectId: projectId
+      });
+      console.log(`Initializing Firebase Admin with Default Credentials for project: ${projectId}`);
+    }
   } catch (err) {
     console.error('Firebase Admin Init Error:', err);
+    // Try minimal init as fallback
+    try { admin.initializeApp({ projectId }); } catch(e) {}
   }
 }
 
@@ -53,33 +65,71 @@ let dbInstance: admin.firestore.Firestore;
 async function initFirestore() {
   try {
     const envProjectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
+    const envDbId = process.env.FIREBASE_DATABASE_ID;
     const configProjectId = firebaseConfig.projectId;
-    const projectId = envProjectId || configProjectId;
-    const dbId = firebaseConfig.firestoreDatabaseId || undefined;
+    const configDbId = firebaseConfig.firestoreDatabaseId;
     
-    console.log(`[DIAGNOSTIC] Env Project: ${envProjectId}, Config Project: ${configProjectId}`);
+    console.log(`[DIAGNOSTIC] App Starting. Env: {P: ${envProjectId}, D: ${envDbId}}, Config: {P: ${configProjectId}, D: ${configDbId}}`);
 
-    // Try the configured database ID first
-    try {
-      dbInstance = getFirestore(dbId);
-      // Canary Check: Try a simple query to see if this DB actually exists
-      // If dbId is provided but doesn't exist, this will throw NOT_FOUND
-      await dbInstance.collection('health').limit(1).get();
-      console.log(`[DIAGNOSTIC] Firestore connected to Project: ${projectId}, Database: ${dbId || '(default)'}`);
-    } catch (e: any) {
-      const isNotFound = e.code === 5 || e.message?.includes('NOT_FOUND') || e.message?.includes('not found') || e.message?.includes('database id was provided but not found');
+    const tryInit = async (pId: string, dId: string | undefined) => {
+      console.log(`[TRY] Initializing with Project: ${pId}, DB: ${dId || '(default)'}`);
       
-      if (isNotFound && dbId) {
-        console.warn(`[DIAGNOSTIC] Database ${dbId} NOT FOUND. Falling back to (default) database.`);
-        dbInstance = getFirestore();
-      } else {
-        // If it's not a NOT_FOUND error, or we're already on default, throw it
-        throw e;
+      // Re-initialize admin if project ID differs from current
+      if (!admin.apps.length) {
+        admin.initializeApp({ projectId: pId });
+      } else if (admin.app().options.projectId !== pId) {
+        console.log(`[RE-INIT] Project change: ${admin.app().options.projectId} -> ${pId}`);
+        await admin.app().delete();
+        admin.initializeApp({ projectId: pId });
+      }
+      
+      const db = getFirestore(dId);
+      // Canary Check: Try to just get the collection reference (no read yet)
+      const healthRef = db.collection('health').doc('check');
+      // Actually try to read or write a small thing to confirm NOT_FOUND catch
+      await healthRef.get().catch(e => {
+        // If it's just "document not found", that's SUCCESS (the DB exists)
+        // If it's 5 NOT_FOUND (Database not found) or 7 PERMISSION_DENIED, then we fail.
+        const isNotFound = e.code === 5 || (e.message && e.message.includes('NOT_FOUND') && !e.message.includes('document'));
+        const isPermissionDenied = e.code === 7 || (e.message && e.message.includes('PERMISSION_DENIED'));
+        
+        if (isNotFound || isPermissionDenied) {
+           throw e;
+        }
+      });
+      return db;
+    };
+
+    // Priority 1: Configuration File (usually most accurate in AI Studio remixed apps)
+    if (configProjectId) {
+      try {
+        dbInstance = await tryInit(configProjectId, configDbId);
+        console.log(`[SUCCESS] Firestore connected via Config: ${configDbId || '(default)'}`);
+        return;
+      } catch (e) {
+        console.warn(`[WARN] Config-based init failed, trying fallbacks...`);
       }
     }
+
+    // Priority 2: Environment Variables
+    if (envProjectId) {
+      try {
+        dbInstance = await tryInit(envProjectId, envDbId);
+        console.log(`[SUCCESS] Firestore connected via Env: ${envDbId || '(default)'}`);
+        return;
+      } catch (e) {
+        console.warn(`[WARN] Env-based init failed.`);
+      }
+    }
+
+    // Final Attempt: Default everything
+    console.log(`[FINAL] Attempting default initialization...`);
+    dbInstance = getFirestore();
   } catch (err) {
-    console.error('Firestore Instance Init Error:', err);
-    dbInstance = getFirestore(); // Final fallback to default
+    console.error('CRITICAL: Firestore Initialization Failed:', err);
+    // Even if it fails, we set a placeholder to avoid undefined errors, 
+    // although operations will still fail.
+    if (!dbInstance) dbInstance = getFirestore();
   }
 }
 
@@ -129,7 +179,8 @@ async function startServer() {
       '30s': 30,
       '1m': 60,
       '3m': 180,
-      '5m': 300
+      '5m': 300,
+      'ladder': 60
     };
 
     const generateDetails = (num: number) => {
@@ -437,6 +488,13 @@ async function startServer() {
           details: err.details,
           stack: err.stack
         }); 
+
+        // Live Recovery: If we hit a NOT_FOUND or PERMISSION_DENIED error, it means the current dbInstance is pointing back to a database that doesn't exist or is inaccessible.
+        // We force it to default for future attempts.
+        if (err.code === 5 || err.code === 7 || err.message?.includes('NOT_FOUND') || err.message?.includes('PERMISSION_DENIED')) {
+          console.warn('[RECOVERY] NOT_FOUND or PERMISSION_DENIED error detected in scheduler. Forcing dbInstance to (default).');
+          dbInstance = getFirestore();
+        }
       }
     }, 500);
 
