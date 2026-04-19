@@ -104,16 +104,19 @@ async function checkMysqlConnection() {
 }
 
 async function startServer() {
-  await initFirestore();
-  isMysqlEnabled = await checkMysqlConnection();
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    if (isMysqlEnabled) console.log('MySQL Mode: Enabled');
-    else console.log('Firebase Mode: Enabled');
+  // Start listening immediately to avoid 503 timeouts on Hostinger
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server process started on port ${PORT}`);
   });
+
+  await initFirestore();
+  isMysqlEnabled = await checkMysqlConnection();
+  
+  if (isMysqlEnabled) console.log('MySQL Mode: Enabled');
+  else console.log('Firebase Mode: Enabled');
 
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', mode: isMysqlEnabled ? 'mysql' : 'firebase' });
