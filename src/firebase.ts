@@ -3,14 +3,8 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
-const projectId = firebaseConfig.projectId;
-const isInternalProject = projectId?.startsWith('ais-dev-') || projectId?.startsWith('ais-pre-') || projectId === 'ai-studio-build';
-const dbId = (!isInternalProject && firebaseConfig.firestoreDatabaseId?.startsWith('ai-studio-')) 
-  ? undefined 
-  : firebaseConfig.firestoreDatabaseId;
-
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, dbId);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
 export enum OperationType {

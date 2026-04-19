@@ -13,7 +13,17 @@ import { query } from './src/lib/mysql';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const firebaseConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'firebase-applet-config.json'), 'utf8'));
+// Load Firebase Config with path resiliency
+let firebaseConfig: any;
+try {
+  const configPath = fs.existsSync(path.join(__dirname, 'firebase-applet-config.json')) 
+    ? path.join(__dirname, 'firebase-applet-config.json')
+    : path.join(process.cwd(), 'firebase-applet-config.json');
+  firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+} catch (err) {
+  console.error('Core Error: Missing firebase-applet-config.json');
+  firebaseConfig = { projectId: process.env.FIREBASE_PROJECT_ID };
+}
 
 // Initialize Firebase Admin
 /**
@@ -39,33 +49,38 @@ if (admin.apps.length === 0) {
 
 // Ensure dbInstance is initialized even if databaseId is problematic
 let dbInstance: admin.firestore.Firestore;
-try {
-  const envProjectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
-  const configProjectId = firebaseConfig.projectId;
-  const projectId = envProjectId || configProjectId;
-  const dbId = firebaseConfig.firestoreDatabaseId || undefined;
-  
-  console.log(`[DIAGNOSTIC] Env Project: ${envProjectId}, Config Project: ${configProjectId}`);
 
-  // Resiliency logic: If the projectId is NOT an ais-dev/ais-pre project (internal to AI Studio),
-  // we should ALWAYS default to the '(default)' database to avoid NOT_FOUND errors.
-  const isInternalProject = projectId?.startsWith('ais-dev-') || projectId?.startsWith('ais-pre-') || projectId === 'ai-studio-build';
-  
-  if (!isInternalProject && dbId && dbId.startsWith('ai-studio-')) {
-    console.warn(`[DIAGNOSTIC] Detected ID mismatch. Using (default) database.`);
-    dbInstance = getFirestore(); 
-  } else {
+async function initFirestore() {
+  try {
+    const envProjectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
+    const configProjectId = firebaseConfig.projectId;
+    const projectId = envProjectId || configProjectId;
+    const dbId = firebaseConfig.firestoreDatabaseId || undefined;
+    
+    console.log(`[DIAGNOSTIC] Env Project: ${envProjectId}, Config Project: ${configProjectId}`);
+
+    // Try the configured database ID first
     try {
       dbInstance = getFirestore(dbId);
-      console.log(`[DIAGNOSTIC] Initialized Firestore with Project: ${projectId}, DB: ${dbId || '(default)'}`);
-    } catch (e) {
-      console.warn(`[DIAGNOSTIC] Failed with ${dbId}. Falling back to default.`);
-      dbInstance = getFirestore();
+      // Canary Check: Try a simple query to see if this DB actually exists
+      // If dbId is provided but doesn't exist, this will throw NOT_FOUND
+      await dbInstance.collection('health').limit(1).get();
+      console.log(`[DIAGNOSTIC] Firestore connected to Project: ${projectId}, Database: ${dbId || '(default)'}`);
+    } catch (e: any) {
+      const isNotFound = e.code === 5 || e.message?.includes('NOT_FOUND') || e.message?.includes('not found') || e.message?.includes('database id was provided but not found');
+      
+      if (isNotFound && dbId) {
+        console.warn(`[DIAGNOSTIC] Database ${dbId} NOT FOUND. Falling back to (default) database.`);
+        dbInstance = getFirestore();
+      } else {
+        // If it's not a NOT_FOUND error, or we're already on default, throw it
+        throw e;
+      }
     }
+  } catch (err) {
+    console.error('Firestore Instance Init Error:', err);
+    dbInstance = getFirestore(); // Final fallback to default
   }
-} catch (err) {
-  console.error('Firestore Instance Init Error:', err);
-  dbInstance = getFirestore(); // Final fallback
 }
 
 // Check if MySQL is configured and reachable
@@ -89,6 +104,7 @@ async function checkMysqlConnection() {
 }
 
 async function startServer() {
+  await initFirestore();
   isMysqlEnabled = await checkMysqlConnection();
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
