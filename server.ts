@@ -4,8 +4,8 @@ dotenv.config();
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 import admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 import { query } from './src/lib/mysql'; 
@@ -580,9 +580,21 @@ async function startServer() {
       const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
       app.use(vite.middlewares);
     } else {
-      const distPath = path.join(process.cwd(), 'dist');
+      // Resilient dist path: check if we are already inside dist or if it's a sibling
+      const distPath = fs.existsSync(path.join(__dirname, 'index.html'))
+        ? __dirname
+        : path.join(process.cwd(), 'dist');
+      
+      console.log(`[PRODUCTION] Serving static files from: ${distPath}`);
       app.use(express.static(distPath));
-      app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+      app.get('*', (req, res) => {
+        const indexPath = path.join(distPath, 'index.html');
+        if (fs.existsSync(indexPath)) {
+          res.sendFile(indexPath);
+        } else {
+          res.status(404).send('Frontend build not found. Please run npm run build.');
+        }
+      });
     }
   } catch (error) { console.error('Server Init Error:', error); }
 }
