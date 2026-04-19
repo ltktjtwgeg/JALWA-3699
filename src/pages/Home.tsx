@@ -59,6 +59,7 @@ export default function Home() {
 
   const lotteryGames = [
     { id: '1m', name: 'Win Go', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/wingo/200/200', fallback: 'https://picsum.photos/seed/wingo/200/200' },
+    { id: 'ladder', name: 'Ladder', color: 'from-[#3b82f6] to-[#1d4ed8]', image: 'https://cdn-icons-png.flaticon.com/512/10512/10512704.png', fallback: 'https://picsum.photos/seed/ladder/200/200' },
     { id: 'wingo', name: 'WinGo', color: 'from-[#f97316] to-[#ec4899]', image: 'https://cdn-icons-png.flaticon.com/512/2858/2858908.png', fallback: 'https://picsum.photos/seed/bingo/200/200' },
     { id: 'roulette', name: 'Roulette', color: 'from-[#10b981] to-[#059669]', image: 'https://cdn-icons-png.flaticon.com/512/10512/10512739.png', fallback: 'https://picsum.photos/seed/roulette/200/200' },
     { id: 'k3', name: 'K3', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/k3/200/200', fallback: 'https://picsum.photos/seed/k3/200/200', isUpcoming: true },
@@ -75,18 +76,15 @@ export default function Home() {
       return;
     }
 
-    const today = new Date().toDateString();
-    const lastHiddenDate = localStorage.getItem('bonus_popup_hidden_date');
+    const sessionHidden = sessionStorage.getItem('bonus_popup_shown_session');
     
-    if (lastHiddenDate !== today) {
+    if (!sessionHidden) {
       setShowBonusPopup(true);
+      sessionStorage.setItem('bonus_popup_shown_session', 'true');
     }
   }, [settings?.showPopup]);
 
   const handleBonusPopupClose = () => {
-    if (noMoreToday) {
-      localStorage.setItem('bonus_popup_hidden_date', new Date().toDateString());
-    }
     setShowBonusPopup(false);
   };
 
@@ -152,7 +150,7 @@ export default function Home() {
       </div>
 
       {/* Banner Slider */}
-      <div className="p-3 pt-6">
+      <div className="p-3 pt-10">
         <div className="relative h-40 bg-[#2a2e35] rounded-2xl overflow-hidden shadow-2xl border border-white/5">
           <AnimatePresence mode="wait">
             <motion.img
@@ -377,24 +375,6 @@ export default function Home() {
 
               {/* Bonus Items */}
               <div className="p-4 pt-2 space-y-3">
-                <div className="bg-gradient-to-r from-emerald-600/20 to-emerald-400/10 rounded-2xl p-4 border border-emerald-500/20 mb-4">
-                   <div className="flex items-center gap-3 mb-2">
-                      <div className="bg-emerald-500/20 p-2 rounded-xl">
-                         <Users className="w-5 h-5 text-emerald-400" />
-                      </div>
-                      <h4 className="text-sm font-black text-white italic">Invitation Reward</h4>
-                   </div>
-                   <p className="text-[10px] text-white/60 leading-tight">
-                      Invite friends and earn up to ₹3,00,000 in bonuses when they deposit. Both parties benefit!
-                   </p>
-                   <button 
-                      onClick={() => navigate('/activity/invitation-bonus')}
-                      className="mt-3 w-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-black py-2 rounded-xl hover:bg-emerald-500/30 transition-all uppercase tracking-widest"
-                   >
-                      View Invitation Rewards
-                   </button>
-                </div>
-
                 <h3 className="text-[10px] font-black text-white/40 uppercase tracking-widest pl-1">First Deposit Bonuses</h3>
                 {[
                   { amount: 100, bonus: 18 },

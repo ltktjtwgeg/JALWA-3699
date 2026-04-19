@@ -10,6 +10,7 @@ import {
   CheckCircle2, 
   XCircle,
   AlertCircle,
+  ShieldCheck,
   BarChart3,
   UserPlus,
   Search,
@@ -32,6 +33,7 @@ import {
   updateDoc, 
   doc,
   getDocs,
+  getDoc,
   addDoc,
   setDoc,
   serverTimestamp,
@@ -41,26 +43,37 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import { db } from '../firebase';
-import { User, Game, Transaction, Bet } from '../types';
+import { User, Game, Transaction, Bet, GameType } from '../types';
 import { toast } from 'sonner';
 import { formatCurrency, cn } from '../lib/utils';
+import { 
+  getSystemSettings, 
+  updateSystemSettings, 
+  SystemSettings, 
+  getGamePoolStats, 
+  setGameControl,
+  updateTransactionStatus
+} from '../services/adminService';
 
 export default function SuperAdmin() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'games' | 'withdrawals' | 'deposits' | 'announcements'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'games' | 'withdrawals' | 'deposits' | 'announcements' | 'control'>('dashboard');
   
   // State for data
   const [users, setUsers] = useState<User[]>([]);
   const [games, setGames] = useState<Game[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [settings, setSettings] = useState<SystemSettings | null>(null);
+  const [activeControls, setActiveControls] = useState<any[]>([]);
+  const [poolStats, setPoolStats] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   // Search and Filter
   const [userSearch, setUserSearch] = useState('');
   const [adjustingBalance, setAdjustingBalance] = useState<{uid: string, amount: string} | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
   
   // Announcement form
   const [newAnnouncement, setNewAnnouncement] = useState({ title: '', content: '' });
@@ -93,6 +106,16 @@ export default function SuperAdmin() {
       setAnnouncements(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
+    const unsubSettings = onSnapshot(doc(db, 'system_config', 'settings'), (doc) => {
+      if (doc.exists()) {
+        setSettings(doc.data() as SystemSettings);
+      }
+    });
+
+    const unsubControls = onSnapshot(query(collection(db, 'game_controls'), where('status', '==', 'pending')), (snap) => {
+      setActiveControls(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
     setLoading(false);
 
     return () => {
@@ -100,8 +123,31 @@ export default function SuperAdmin() {
       unsubGames();
       unsubTransactions();
       unsubAnnouncements();
+      unsubSettings();
+      unsubControls();
     };
   }, []);
+
+  // Pool stats effect
+  useEffect(() => {
+    if (activeTab === 'control') {
+      const fetchPool = async () => {
+        const types: GameType[] = ['30s', '1m', '3m', '5m'];
+        try {
+          const results = await Promise.all(types.map(t => getGamePoolStats(t)));
+          const newStats: any = {};
+          types.forEach((t, i) => newStats[t] = results[i]);
+          setPoolStats(newStats);
+        } catch (e) {
+          console.error(e);
+        }
+      };
+      
+      fetchPool();
+      const interval = setInterval(fetchPool, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [activeTab]);
 
   // Stats Logic
   const stats = useMemo(() => {
@@ -123,31 +169,45 @@ export default function SuperAdmin() {
   }, [users, transactions]);
 
   // Actions
-  const handleTransactionStatus = async (tId: string, status: 'completed' | 'failed', amount?: number, uid?: string, type?: string) => {
+  const handleTransactionStatusAction = async (tId: string, status: 'completed' | 'failed', uid: string) => {
     setIsProcessing(true);
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'transactions', tId), { status });
-      
-      // If rejecting a withdrawal, refund the user
-      if (status === 'failed' && type === 'withdraw' && uid && amount) {
-        batch.update(doc(db, 'users', uid), { balance: increment(amount) });
-        toast.info('Withdrawal rejected and balance refunded');
-      }
-
-      // If approving a deposit, add to user balance (if not already handled)
-      if (status === 'completed' && type === 'deposit' && uid && amount) {
-        batch.update(doc(db, 'users', uid), { 
-          balance: increment(amount),
-          totalDeposits: increment(amount)
-        });
-        toast.info('Deposit approved and balance added');
-      }
-
-      await batch.commit();
-      toast.success('Transaction updated successfully');
+      await updateTransactionStatus(tId, status === 'failed' ? 'rejected' : 'completed', uid);
+      toast.success(`Transaction ${status}`);
     } catch (error) {
       toast.error('Failed to update transaction');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleUpdateSetting = async (key: keyof SystemSettings, value: any) => {
+    try {
+      await updateSystemSettings({ [key]: value });
+      toast.success('Setting updated');
+    } catch (error) {
+      toast.error('Failed to update setting');
+    }
+  };
+
+  const handleManualControl = async (type: GameType, value: string) => {
+    setIsProcessing(true);
+    try {
+      // Clear existing pending controls for this type first for better user experience
+      const q = query(collection(db, 'game_controls'), where('gameType', '==', type), where('status', '==', 'pending'));
+      const existing = await getDocs(q);
+      const batch = writeBatch(db);
+      existing.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+
+      if (value === 'Force Big Only') await setGameControl(type, 'Big');
+      else if (value === 'Force Small Only') await setGameControl(type, 'Small');
+      else if (!isNaN(parseInt(value))) await setGameControl(type, undefined, parseInt(value));
+      
+      toast.success(`Controlled scheduled for ${type}`);
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to schedule control');
     } finally {
       setIsProcessing(false);
     }
@@ -238,7 +298,7 @@ export default function SuperAdmin() {
             { id: 'users', label: 'Users', icon: Users },
             { id: 'withdrawals', label: 'Withdrawals', icon: ArrowUpCircle, count: stats.pendingWithdrawals.length },
             { id: 'deposits', label: 'Deposits', icon: ArrowDownCircle, count: stats.pendingDeposits.length },
-            { id: 'games', label: 'Game History', icon: Gamepad2 },
+            { id: 'control', label: 'Game Control', icon: ShieldCheck },
             { id: 'announcements', label: 'Announcements', icon: Megaphone }
           ].map((tab) => (
             <button
@@ -283,11 +343,46 @@ export default function SuperAdmin() {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="bg-[#1a1d21] p-6 rounded-3xl border border-white/5 space-y-4">
-                  <h3 className="font-bold flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-rose-500" />
-                    Urgent Tasks
+                  <h3 className="font-bold flex items-center gap-2 uppercase tracking-tighter">
+                    <ShieldCheck className="w-4 h-4 text-purple-500" />
+                    Global Game Engine
                   </h3>
-                  <div className="space-y-3">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-black/20 rounded-2xl border border-white/5">
+                      <div>
+                        <p className="text-xs font-bold">Random Mode</p>
+                        <p className="text-[10px] text-gray-500 italic">Generate results randomly if not manually set</p>
+                      </div>
+                      <button 
+                        onClick={() => handleUpdateSetting('randomMode', !settings?.randomMode)}
+                        className={cn(
+                          "w-12 h-6 rounded-full transition-all relative flex items-center px-1",
+                          settings?.randomMode ? "bg-emerald-500" : "bg-gray-700"
+                        )}
+                      >
+                        <div className={cn("w-4 h-4 bg-white rounded-full transition-all shadow-sm", settings?.randomMode ? "translate-x-6" : "translate-x-0")} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-black/20 rounded-2xl border border-white/5">
+                      <div>
+                        <p className="text-xs font-bold">Auto Profit Mode</p>
+                        <p className="text-[10px] text-gray-500 italic">Adjust results to ensure platform profit</p>
+                      </div>
+                      <button 
+                        onClick={() => handleUpdateSetting('autoProfit', !settings?.autoProfit)}
+                        className={cn(
+                          "w-12 h-6 rounded-full transition-all relative flex items-center px-1",
+                          settings?.autoProfit ? "bg-purple-600" : "bg-gray-700"
+                        )}
+                      >
+                        <div className={cn("w-4 h-4 bg-white rounded-full transition-all shadow-sm", settings?.autoProfit ? "translate-x-6" : "translate-x-0")} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-[#1a1d21] p-6 rounded-3xl border border-white/5 space-y-4">
                     {stats.pendingWithdrawals.length > 0 ? (
                       <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center justify-between">
                         <p className="text-sm font-bold text-rose-400">{stats.pendingWithdrawals.length} Pending Withdrawals</p>
@@ -325,6 +420,161 @@ export default function SuperAdmin() {
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
+
+          {activeTab === 'control' && (
+            <div className="space-y-6 max-w-5xl mx-auto">
+              {/* Global Controls */}
+              <div className="bg-[#1a1d21] p-8 rounded-[32px] border border-white/5 space-y-8 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-8 opacity-5">
+                   <Gamepad2 className="w-32 h-32" />
+                </div>
+                
+                <div className="relative z-10 flex flex-wrap gap-8 items-center justify-between">
+                  <div>
+                    <h3 className="text-xl font-black text-white italic tracking-tighter uppercase mb-1">Global Game Engine</h3>
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Switch between fully random and system-favoring modes</p>
+                  </div>
+                  <div className="flex bg-[#0f1115] p-1.5 rounded-2xl border border-white/5">
+                    <button 
+                      onClick={() => {
+                        handleUpdateSetting('wingoRandomMode', true);
+                        handleUpdateSetting('wingoAutoControl', false);
+                      }}
+                      className={cn(
+                        "px-6 py-2.5 rounded-xl font-black text-[10px] tracking-widest uppercase transition-all",
+                        settings?.wingoRandomMode ? "bg-purple-600 text-white shadow-lg shadow-purple-900/40" : "text-gray-500 hover:text-gray-400"
+                      )}
+                    >
+                      Random {settings?.wingoRandomMode ? 'ON' : 'OFF'}
+                    </button>
+                    <button 
+                      onClick={() => {
+                        handleUpdateSetting('wingoRandomMode', false);
+                        handleUpdateSetting('wingoAutoControl', true);
+                      }}
+                      className={cn(
+                        "px-6 py-2.5 rounded-xl font-black text-[10px] tracking-widest uppercase transition-all",
+                        settings?.wingoAutoControl ? "bg-emerald-600 text-white shadow-lg shadow-emerald-900/40" : "text-gray-500 hover:text-gray-400"
+                      )}
+                    >
+                      Auto Profit {settings?.wingoAutoControl ? 'ON' : 'OFF'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Game Pools */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {['30s', '1m', '3m', '5m'].map((type) => {
+                  const pool = poolStats[type] || { total: 0, Big: 0, Small: 0, Red: 0, Green: 0, Violet: 0, numbers: Array(10).fill(0) };
+                  const pendingControl = activeControls.find(c => c.gameType === type);
+                  
+                  // Calculate Next Period
+                  const duration = type === '30s' ? 30 : type === '1m' ? 60 : type === '3m' ? 180 : 300;
+                  const now = Math.floor(Date.now() / 1000);
+                  const periodTimestamp = Math.floor(now / duration) * duration + duration;
+                  const periodDate = new Date(periodTimestamp * 1000);
+                  const periodId = periodDate.getFullYear().toString() +
+                    (periodDate.getMonth() + 1).toString().padStart(2, '0') +
+                    periodDate.getDate().toString().padStart(2, '0') +
+                    periodDate.getHours().toString().padStart(2, '0') +
+                    periodDate.getMinutes().toString().padStart(2, '0') +
+                    ((periodDate.getSeconds() / duration) + 1).toString().padStart(2, '0');
+
+                  return (
+                    <div key={type} className="bg-[#1a1d21] p-6 rounded-[32px] border border-white/5 relative overflow-hidden group hover:border-white/10 transition-all">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                           <div className="w-10 h-10 rounded-2xl bg-purple-500/10 flex items-center justify-center">
+                              <Gamepad2 className="w-5 h-5 text-purple-400" />
+                           </div>
+                           <h4 className="font-black text-lg tracking-tighter text-white uppercase italic">WinGo {type}</h4>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[8px] text-gray-500 font-black uppercase tracking-widest">Current Pool</p>
+                          <span className="text-sm font-black text-emerald-400 italic">₹ {pool.total.toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      <div className="mb-6 flex items-center justify-between bg-black/40 p-3 rounded-2xl border border-purple-500/30 shadow-lg shadow-purple-900/20">
+                        <div className="flex flex-col">
+                           <p className="text-[8px] text-gray-500 font-black uppercase tracking-widest">Next Period</p>
+                           <p className="text-sm font-black text-amber-500 italic font-mono tracking-widest animate-pulse">{periodId}</p>
+                        </div>
+                        {type === '30s' && (
+                          <div className="bg-purple-600/20 px-3 py-1 rounded-full border border-purple-500/30">
+                            <span className="text-[10px] font-black text-purple-400 uppercase italic">Active</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                        <div className="bg-[#0f1115] p-3 rounded-2xl border border-white/5 flex flex-col">
+                           <span className="text-[8px] text-gray-600 font-bold uppercase mb-1">Big Bets</span>
+                           <span className="text-sm font-black text-orange-400">₹ {pool.Big.toLocaleString()}</span>
+                        </div>
+                        <div className="bg-[#0f1115] p-3 rounded-2xl border border-white/5 flex flex-col">
+                           <span className="text-[8px] text-gray-600 font-bold uppercase mb-1">Small Bets</span>
+                           <span className="text-sm font-black text-sky-400">₹ {pool.Small.toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-10 gap-1 mb-6">
+                        {pool.numbers.map((amt: number, n: number) => (
+                           <div key={n} className="flex flex-col items-center">
+                              <div className={cn(
+                                "w-6 h-6 rounded-lg mb-1 flex items-center justify-center text-[10px] font-black italic border transition-all",
+                                pendingControl?.targetNumber === n ? "scale-110 shadow-lg ring-2 ring-purple-500 z-10" : "opacity-80",
+                                [1,3,7,9].includes(n) ? "bg-emerald-500/20 border-emerald-500/30 text-emerald-400" :
+                                [2,4,6,8].includes(n) ? "bg-rose-500/20 border-rose-500/30 text-rose-400" :
+                                n === 0 ? "bg-rose-500/20 border-rose-500/30 text-rose-400" : "bg-emerald-500/20 border-emerald-500/30 text-emerald-400"
+                              )}>
+                                {n}
+                              </div>
+                              <span className="text-[8px] font-bold text-gray-600">₹{amt > 0 ? amt : 0}</span>
+                           </div>
+                        ))}
+                      </div>
+
+                      {/* Controls */}
+                      <div className="space-y-4 pt-4 border-t border-white/5">
+                        <div>
+                          <p className="text-[8px] text-gray-500 font-black uppercase tracking-widest mb-2">Override Control</p>
+                          <select 
+                            value={pendingControl?.targetSize ? `Force ${pendingControl.targetSize} Only` : 'Auto'}
+                            onChange={(e) => handleManualControl(type as GameType, e.target.value)}
+                            className={cn(
+                              "w-full bg-[#0f1115] border text-[10px] font-black p-3.5 rounded-2xl tracking-widest uppercase outline-none transition-all",
+                              pendingControl?.targetSize ? "border-purple-500 text-white shadow-lg shadow-purple-900/20" : "border-white/5 text-gray-400"
+                            )}
+                          >
+                            <option value="Auto">System Default (Auto)</option>
+                            <option value="Force Big Only">Force Big Only</option>
+                            <option value="Force Small Only">Force Small Only</option>
+                          </select>
+                        </div>
+                        <div className="grid grid-cols-5 gap-2">
+                           {[0,1,2,3,4,5,6,7,8,9].map(n => (
+                              <button 
+                                key={n}
+                                onClick={() => handleManualControl(type as GameType, n.toString())}
+                                className={cn(
+                                  "h-12 text-xs font-black italic border-2 rounded-2xl transition-all shadow-sm active:scale-95 flex items-center justify-center",
+                                  pendingControl?.targetNumber === n 
+                                    ? "bg-purple-600 text-white border-white scale-110 shadow-xl shadow-purple-900/60 z-10" 
+                                    : "bg-[#0f1115] border-white/5 text-gray-500 hover:bg-white/5"
+                                )}
+                              >
+                                {n}
+                              </button>
+                           ))}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
@@ -415,13 +665,13 @@ export default function SuperAdmin() {
                   </div>
                   <div className="flex gap-3">
                     <button 
-                      onClick={() => handleTransactionStatus(w.id!, 'completed')}
+                      onClick={() => handleTransactionStatusAction(w.id!, 'completed', w.uid)}
                       className="flex-1 bg-emerald-600 hover:bg-emerald-500 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-900/20 transition-all flex items-center justify-center gap-2"
                     >
                       <CheckCircle2 className="w-4 h-4" /> Approve
                     </button>
                     <button 
-                      onClick={() => handleTransactionStatus(w.id!, 'failed', w.amount, w.uid, 'withdraw')}
+                      onClick={() => handleTransactionStatusAction(w.id!, 'failed', w.uid)}
                       className="flex-1 bg-rose-600 hover:bg-rose-500 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-rose-900/20 transition-all flex items-center justify-center gap-2"
                     >
                       <XCircle className="w-4 h-4" /> Reject
@@ -449,10 +699,16 @@ export default function SuperAdmin() {
                   </div>
                   <div className="flex gap-3">
                     <button 
-                      onClick={() => handleTransactionStatus(d.id!, 'completed', d.amount, d.uid, 'deposit')}
+                      onClick={() => handleTransactionStatusAction(d.id!, 'completed', d.uid)}
                       className="flex-1 bg-emerald-600 hover:bg-emerald-500 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
                     >
                       Approve
+                    </button>
+                    <button 
+                      onClick={() => handleTransactionStatusAction(d.id!, 'failed', d.uid)}
+                      className="flex-1 bg-rose-600 hover:bg-rose-500 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all"
+                    >
+                      Reject
                     </button>
                   </div>
                 </div>

@@ -18,13 +18,8 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Game, Bet, GameType } from '../types';
-
-export const GAME_DURATIONS: Record<GameType, number> = {
-  '30s': 30,
-  '1m': 60,
-  '3m': 180,
-  '5m': 300,
-};
+import { GAME_DURATIONS } from '../gameConstants';
+import { getGamePoolStats } from './adminService';
 
 export async function processGameResults(type: GameType) {
   const duration = GAME_DURATIONS[type];
@@ -82,11 +77,10 @@ export async function processGameResults(type: GameType) {
           });
         } else {
           // Check for Auto Control (Least Amount wins)
-          const settingsSnap = await getDoc(doc(db, 'system_config', 'main'));
+          const settingsSnap = await getDoc(doc(db, 'system_config', 'settings'));
           const settings = settingsSnap.exists() ? settingsSnap.data() : { wingoAutoControl: false };
 
           if (settings.wingoAutoControl) {
-            const { getGamePoolStats } = require('./adminService');
             const pool = await getGamePoolStats(type);
             
             // Find outcome with LEAST payout

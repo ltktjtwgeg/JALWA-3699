@@ -212,15 +212,14 @@ export default function Roulette() {
           // Calculate "Tax" (House edge)
           const rouletteTax = totalBetAmount - totalWin;
           if (rouletteTax !== 0) {
-             const taxRef = doc(db, 'stats', 'roulette');
-             await updateDoc(taxRef, { 
-               totalTax: increment(rouletteTax),
-               updatedAt: serverTimestamp() 
-             }).catch(() => {
-               // Create if doesn't exist
-               const { setDoc } = require('firebase/firestore');
-               setDoc(taxRef, { totalTax: rouletteTax, updatedAt: serverTimestamp() });
-             });
+                const taxRef = doc(db, 'stats', 'roulette');
+                await updateDoc(taxRef, { 
+                  totalTax: increment(rouletteTax),
+                  updatedAt: serverTimestamp() 
+                }).catch(() => {
+                  // Create if doesn't exist
+                  return setDoc(taxRef, { totalTax: rouletteTax, updatedAt: serverTimestamp() });
+                });
           }
 
           // Record Transaction

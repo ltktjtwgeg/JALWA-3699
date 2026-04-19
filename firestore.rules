@@ -183,9 +183,9 @@ service cloud.firestore {
     }
 
     match /game_controls/{controlId} {
-      allow read: if isAuthenticated();
+      allow read: if isAdmin();
       allow create: if isAdmin();
-      allow update: if isAuthenticated() && (isAdmin() || (request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'usedInPeriod', 'usedBy', 'usedAt']) && (request.resource.data.status == 'completed' || request.resource.data.status == 'used')));
+      allow update: if isAdmin() || (isAuthenticated() && request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'usedInPeriod', 'usedBy', 'usedAt']) && (request.resource.data.status == 'completed' || request.resource.data.status == 'used'));
       allow delete: if isAdmin();
     }
 
@@ -237,7 +237,7 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    match /system_config/main {
+    match /system_config/{docId} {
       allow read: if true;
       allow write: if isAdmin();
     }

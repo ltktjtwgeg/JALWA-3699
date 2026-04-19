@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { GameType } from '../types';
-import { GAME_DURATIONS } from './gameService';
+import { GAME_DURATIONS } from '../gameConstants';
 
 export interface Banner {
   id: string;
@@ -25,7 +25,9 @@ export interface Banner {
 }
 
 export interface SystemSettings {
-  wingoAutoControl: boolean;
+  autoProfit: boolean;
+  randomMode: boolean;
+  wingoAutoControl: boolean; // Keep for backward compatibility if needed
   wingoRandomMode: boolean;
   usdtRate: number;
   withdrawLimit: number;
@@ -43,6 +45,8 @@ export interface SystemSettings {
 }
 
 export const DEFAULT_SETTINGS: SystemSettings = {
+  autoProfit: false,
+  randomMode: true,
   wingoAutoControl: false,
   wingoRandomMode: true,
   usdtRate: 92,
@@ -74,7 +78,7 @@ export const DEFAULT_SETTINGS: SystemSettings = {
 };
 
 export async function getSystemSettings(): Promise<SystemSettings> {
-  const settingsDoc = await getDoc(doc(db, 'system_config', 'main'));
+  const settingsDoc = await getDoc(doc(db, 'system_config', 'settings'));
   if (settingsDoc.exists()) {
     return { ...DEFAULT_SETTINGS, ...settingsDoc.data() } as SystemSettings;
   }
@@ -82,7 +86,7 @@ export async function getSystemSettings(): Promise<SystemSettings> {
 }
 
 export async function updateSystemSettings(settings: Partial<SystemSettings>) {
-  await setDoc(doc(db, 'system_config', 'main'), {
+  await setDoc(doc(db, 'system_config', 'settings'), {
     ...settings,
     updatedAt: serverTimestamp()
   }, { merge: true });
@@ -193,14 +197,17 @@ export async function getGamePoolStats(type: GameType) {
 }
 
 export async function setGameControl(type: GameType, targetSize?: string, targetNumber?: number) {
-  await addDoc(collection(db, 'game_controls'), {
+  const data: any = {
     type: 'wingo',
     gameType: type,
-    targetSize,
-    targetNumber,
     status: 'pending',
     createdAt: serverTimestamp()
-  });
+  };
+  
+  if (targetSize !== undefined && targetSize !== null) data.targetSize = targetSize;
+  if (targetNumber !== undefined && targetNumber !== null) data.targetNumber = targetNumber;
+  
+  await addDoc(collection(db, 'game_controls'), data);
 }
 
 export async function createGiftCode(code: string, amount: number, maxUses: number) {
@@ -249,12 +256,45 @@ export async function updateTransactionStatus(id: string, status: 'completed' | 
   
   if (status === 'completed') {
     if (transData.type === 'deposit') {
+      const userSnap = await getDoc(userRef);
+      const userData = userSnap.data();
+      const isFirstDeposit = !userData?.totalDeposits || userData?.totalDeposits === 0;
+      
+      let bonusAmount = 0;
+      if (isFirstDeposit) {
+        // Calculate based on fixed rules first
+        if (transData.amount >= 1000) bonusAmount = 188;
+        else if (transData.amount >= 500) bonusAmount = 108;
+        else if (transData.amount >= 300) bonusAmount = 28;
+        else if (transData.amount >= 100) bonusAmount = 18;
+
+        // If no fixed rule matched, try percentage if configured
+        if (bonusAmount === 0) {
+          const settingsSnap = await getDoc(doc(db, 'system_config', 'settings'));
+          const commissionRate = settingsSnap.data()?.commissionRate || 0;
+          bonusAmount = transData.amount * commissionRate;
+        }
+      }
+
+      const totalAdd = transData.amount + bonusAmount;
+
       await updateDoc(userRef, { 
-        balance: increment(transData.amount),
+        balance: increment(totalAdd),
         totalDeposits: increment(transData.amount),
         dailyDeposits: increment(transData.amount),
         requiredTurnover: increment(transData.amount)
       });
+
+      if (bonusAmount > 0) {
+        await addDoc(collection(db, 'transactions'), {
+          uid,
+          type: 'bonus',
+          amount: bonusAmount,
+          status: 'completed',
+          description: 'First Deposit Bonus',
+          createdAt: serverTimestamp()
+        });
+      }
     }
   } else if (status === 'rejected') {
     if (transData.type === 'withdraw') {

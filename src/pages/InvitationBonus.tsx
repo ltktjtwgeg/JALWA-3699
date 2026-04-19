@@ -139,13 +139,7 @@ export default function InvitationBonus() {
         </div>
 
         {/* Quick Links */}
-        <div className="grid grid-cols-2 gap-4 p-4 mt-[-20px] relative z-10">
-          <button className="bg-[#2a2e35] p-5 rounded-3xl border border-white/5 flex flex-col items-center gap-2 shadow-xl hover:bg-[#32363e] transition-all">
-             <div className="w-10 h-10 bg-blue-500/20 rounded-2xl flex items-center justify-center">
-                <FileText className="w-6 h-6 text-blue-400" />
-             </div>
-             <span className="text-[10px] font-bold text-gray-400 uppercase">Invitation reward rules</span>
-          </button>
+        <div className="grid grid-cols-1 gap-4 p-4 mt-[-20px] relative z-10">
           <button className="bg-[#2a2e35] p-5 rounded-3xl border border-white/5 flex flex-col items-center gap-2 shadow-xl hover:bg-[#32363e] transition-all">
              <div className="w-10 h-10 bg-emerald-500/20 rounded-2xl flex items-center justify-center">
                 <ClipboardList className="w-6 h-6 text-emerald-400" />
@@ -156,6 +150,31 @@ export default function InvitationBonus() {
 
         {/* Bonus Tiers */}
         <div className="p-4 space-y-4">
+          <div className="bg-[#2a2e35] p-6 rounded-3xl border border-white/5 space-y-3">
+             <h3 className="text-sm font-black text-white italic uppercase tracking-wider flex items-center gap-2">
+                <Info className="w-4 h-4 text-emerald-400" />
+                Invitation Rules
+             </h3>
+             <ul className="space-y-2">
+                <li className="text-[10px] text-gray-400 flex gap-2">
+                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1 shrink-0" />
+                   Invite friends using your unique referral code.
+                </li>
+                <li className="text-[10px] text-gray-400 flex gap-2">
+                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1 shrink-0" />
+                   The invited friend must register and make a minimum deposit of <span className="text-emerald-400 font-bold">₹300.00</span>.
+                </li>
+                <li className="text-[10px] text-gray-400 flex gap-2">
+                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1 shrink-0" />
+                   After a successful ₹300 deposit, you will receive a <span className="text-emerald-400 font-bold">₹38.00 bonus</span> (for Tier 1).
+                </li>
+                <li className="text-[10px] text-gray-400 flex gap-2">
+                   <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1 shrink-0" />
+                   Once criteria are met, click <span className="text-emerald-400 font-bold">"Finish"</span> to claim your reward instantly to your account.
+                </li>
+             </ul>
+          </div>
+
           {BONUS_TIERS.map((tier) => {
             const qualifiedCount = getQualifiedCount(tier.requiredRecharge);
             const isClaimed = user?.claimedInvitationBonuses?.includes(tier.id);
@@ -168,40 +187,33 @@ export default function InvitationBonus() {
               >
                 <div className="p-4 flex items-center justify-between border-b border-white/5 bg-gradient-to-r from-emerald-500/10 to-transparent">
                    <div className="flex items-center gap-2">
-                      <div className="bg-emerald-500 text-white text-[10px] font-black px-3 py-1 rounded-full italic shadow-lg shadow-emerald-500/20">
+                      <div className="bg-rose-500 text-white text-[10px] font-black px-3 py-1 rounded-full italic shadow-lg shadow-rose-500/20">
                          {tier.name}
                       </div>
-                      <div className="w-6 h-6 rounded-full border-2 border-white/20 flex items-center justify-center">
-                         <XIcon size={12} className="text-white/40" />
-                      </div>
+                      <span className="text-[10px] font-bold text-gray-500 uppercase">Invite {tier.requiredInvitees} People</span>
                    </div>
-                   <span className="text-lg font-black text-orange-500 tabular-nums">₹{tier.amount.toFixed(2)}</span>
+                   <span className="text-lg font-black text-emerald-500 tabular-nums">₹{tier.amount.toFixed(2)}</span>
                 </div>
 
                 <div className="p-5 space-y-6">
-                   <div className="grid grid-cols-1 gap-2">
-                       <div className="bg-[#1f2228] p-3 rounded-2xl border border-white/5 flex justify-between items-center">
-                          <span className="text-[10px] text-gray-500 font-bold uppercase">Number of invitees</span>
-                          <span className="text-xs font-black text-gray-300">{tier.requiredInvitees}</span>
-                       </div>
-                       <div className="bg-[#1f2228] p-3 rounded-2xl border border-white/5 flex justify-between items-center">
-                          <span className="text-[10px] text-gray-500 font-bold uppercase">Recharge per people</span>
-                          <span className="text-xs font-black text-emerald-400">₹{tier.requiredRecharge.toFixed(2)}</span>
-                       </div>
-                   </div>
-
-                   <div className="flex items-center justify-between gap-8 px-4">
+                   <div className="flex items-center justify-between gap-8 bg-[#1f2228] p-4 rounded-2xl border border-white/5">
                        <div className="flex flex-col items-center gap-1">
                           <span className="text-lg font-black text-emerald-400 tabular-nums">
                             {Math.min(qualifiedCount, tier.requiredInvitees)} / {tier.requiredInvitees}
                           </span>
-                          <span className="text-[8px] text-gray-500 font-bold uppercase tracking-widest text-center leading-tight">Number of invitees</span>
+                          <span className="text-[8px] text-gray-500 font-bold uppercase tracking-widest text-center">Referrals</span>
+                       </div>
+                       <div className="flex-1 h-2 bg-black/40 rounded-full overflow-hidden border border-white/5">
+                          <div 
+                            className="h-full bg-gradient-to-r from-emerald-400 to-emerald-600 shadow-[0_0_10px_rgba(52,211,153,0.5)] transition-all duration-500"
+                            style={{ width: `${(Math.min(qualifiedCount, tier.requiredInvitees) / tier.requiredInvitees) * 100}%` }}
+                          />
                        </div>
                        <div className="flex flex-col items-center gap-1">
-                          <span className="text-lg font-black text-rose-500 tabular-nums">
-                             {Math.min(qualifiedCount, tier.requiredInvitees)} / {tier.requiredInvitees}
+                          <span className="text-lg font-black text-orange-500 tabular-nums">
+                             ₹{tier.requiredRecharge}
                           </span>
-                          <span className="text-[8px] text-gray-500 font-bold uppercase tracking-widest text-center leading-tight">Deposit number</span>
+                          <span className="text-[8px] text-gray-500 font-bold uppercase tracking-widest text-center">Min. Dep</span>
                        </div>
                    </div>
 
@@ -211,13 +223,13 @@ export default function InvitationBonus() {
                     className={cn(
                       "w-full py-4 rounded-full font-black text-sm uppercase tracking-widest transition-all shadow-xl",
                       isClaimed 
-                        ? "bg-emerald-500/20 text-emerald-500 border border-emerald-500/30" 
+                        ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" 
                         : isAvailable
                           ? "bg-gradient-to-r from-emerald-400 to-emerald-600 text-white shadow-emerald-500/20 hover:scale-[1.02] active:scale-[0.98]"
                           : "bg-gray-200 text-gray-900 shadow-white/5 disabled:opacity-50"
                     )}
                    >
-                     {isClaimed ? 'Claimed' : claiming === tier.id ? 'Claiming...' : isAvailable ? 'Claim Bonus' : 'Unfinished'}
+                     {isClaimed ? 'Claimed' : claiming === tier.id ? 'Claiming...' : isAvailable ? 'Finish' : 'Unfinished'}
                    </button>
                 </div>
               </div>

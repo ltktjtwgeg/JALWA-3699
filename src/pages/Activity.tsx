@@ -101,21 +101,12 @@ export default function Activity() {
         ))}
       </div>
 
-      {/* Large Banners */}
-      <div className="px-4 mt-6 space-y-4">
-        <div className="bg-[#2a2e35] rounded-2xl overflow-hidden border border-gray-800">
-           <img src="https://picsum.photos/seed/chicken/800/300" alt="Chicken Road" className="w-full h-40 object-cover" />
-           <div className="p-4 flex justify-between items-center">
-              <h4 className="font-bold">CHICKEN ROAD 2</h4>
-              <ChevronRight className="w-5 h-5 text-gray-600" />
-           </div>
-        </div>
-        <div className="bg-[#2a2e35] rounded-2xl overflow-hidden border border-gray-800">
-           <img src="https://picsum.photos/seed/roulette/800/300" alt="Lucky Roulette" className="w-full h-40 object-cover" />
-           <div className="p-4 flex justify-between items-center">
-              <h4 className="font-bold">Lucky Roulette</h4>
-              <ChevronRight className="w-5 h-5 text-gray-600" />
-           </div>
+      {/* Large Banners removed per request */}
+      <div className="px-4 mt-6">
+        <div className="bg-gradient-to-br from-indigo-900/40 to-purple-900/40 p-8 rounded-3xl border border-white/5 flex flex-col items-center justify-center text-center gap-3">
+           <Gift className="w-12 h-12 text-purple-400" />
+           <h4 className="font-bold text-lg">More Activities Coming Soon</h4>
+           <p className="text-sm text-gray-500 max-w-[200px]">Stay tuned for new rewards and challenges!</p>
         </div>
       </div>
 

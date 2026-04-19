@@ -39,9 +39,18 @@ export default function Deposit() {
     
     setLoading(true);
     try {
+      // Calculate Bonus
+      let bonus = 0;
+      if (user.totalDeposits === 0) { // First deposit bonus
+        if (depositAmount >= 1000) bonus = 188;
+        else if (depositAmount >= 500) bonus = 108;
+        else if (depositAmount >= 300) bonus = 28;
+        else if (depositAmount >= 100) bonus = 18;
+      }
+
       // Update balance and total deposits
       await updateDoc(doc(db, 'users', user.uid), {
-        balance: increment(depositAmount),
+        balance: increment(depositAmount + bonus),
         totalDeposits: increment(depositAmount),
         dailyDeposits: increment(depositAmount),
         requiredTurnover: increment(depositAmount)
@@ -51,9 +60,9 @@ export default function Deposit() {
       await addDoc(collection(db, 'transactions'), {
         uid: user.uid,
         type: 'deposit',
-        amount: depositAmount,
+        amount: depositAmount + bonus,
         status: 'completed',
-        description: `Deposit via ${depositMethod.toUpperCase()} (${depositChannel})`,
+        description: `Deposit via ${depositMethod.toUpperCase()} (${depositChannel})${bonus > 0 ? ` + Bonus ₹${bonus}` : ''}`,
         createdAt: serverTimestamp()
       });
 

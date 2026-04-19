@@ -16,12 +16,50 @@ const __dirname = path.dirname(__filename);
 const firebaseConfig = JSON.parse(fs.readFileSync(path.join(__dirname, 'firebase-applet-config.json'), 'utf8'));
 
 // Initialize Firebase Admin
+/**
+ * PRODUCTION CHECKLIST FOR HOSTINGER DEPLOYMENT:
+ * 1. Database: Update DB_HOST to 'srv2213.hstgr.io' (IP: 31.97.2.1).
+ * 2. Domains: Add your domains to Firebase Console > Authentication > Settings > Authorized Domains:
+ *    - seashell-tiger-696001.hostingersite.com
+ *    - jalwa369.com
+ * 3. Secrets: Set FIREBASE_SERVICE_ACCOUNT_JSON in your hosting environment.
+ */
 if (admin.apps.length === 0) {
-  admin.initializeApp({
-    projectId: firebaseConfig.projectId
-  });
+  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || firebaseConfig.projectId;
+  console.log(`Initializing Firebase Admin with Project: ${projectId}`);
+  
+  try {
+    admin.initializeApp({
+      projectId: projectId
+    });
+  } catch (err) {
+    console.error('Firebase Admin Init Error:', err);
+  }
 }
-const dbInstance = getFirestore(firebaseConfig.firestoreDatabaseId);
+
+// Ensure dbInstance is initialized even if databaseId is problematic
+let dbInstance: admin.firestore.Firestore;
+try {
+  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || firebaseConfig.projectId;
+  const dbId = firebaseConfig.firestoreDatabaseId || undefined;
+  
+  // Resiliency logic: If the projectId is NOT an ais-dev/ais-pre project (which are our internal ones)
+  // but the databaseId is an ai-studio-* UUID, it's likely a configuration mismatch from a remix/copy.
+  // In that case, we should default to (default).
+  const isInternalProject = projectId?.startsWith('ais-dev-') || projectId?.startsWith('ais-pre-') || projectId === 'ai-studio-build';
+  const looksLikeInternalDb = dbId?.startsWith('ai-studio-');
+  
+  if (!isInternalProject && looksLikeInternalDb) {
+    console.warn(`Detected project/database ID mismatch. Project: ${projectId}, DB: ${dbId}. Defaulting to (default) database.`);
+    dbInstance = getFirestore(); 
+  } else {
+    dbInstance = getFirestore(dbId);
+    console.log(`Firestore connected to Project: ${projectId}, Database: ${dbId || '(default)'}`);
+  }
+} catch (err) {
+  console.error('Firestore Instance Init Error:', err);
+  dbInstance = getFirestore(); // Fallback to default
+}
 
 // Check if MySQL is configured and reachable
 let isMysqlEnabled = !!process.env.DB_HOST && !!process.env.DB_USER && !!process.env.DB_NAME;
@@ -30,7 +68,12 @@ async function checkMysqlConnection() {
   if (!isMysqlEnabled) return false;
   try {
     const { query: testQuery } = await import('./src/lib/mysql');
-    await testQuery('SELECT 1');
+    // Add a race to avoid hanging forever on poor connection
+    const connectionTest = Promise.race([
+      testQuery('SELECT 1'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('MySQL connection timeout')), 5000))
+    ]);
+    await connectionTest;
     return true;
   } catch (err) {
     console.error('MySQL Connection Failed. Falling back to Firebase mode.', (err as any).message);
@@ -63,15 +106,104 @@ async function startServer() {
       '5m': 300
     };
 
-    const generateResult = () => {
-      const number = Math.floor(Math.random() * 10);
+    const generateDetails = (num: number) => {
       let color = '';
-      if ([1, 3, 7, 9].includes(number)) color = 'Green';
-      else if ([2, 4, 6, 8].includes(number)) color = 'Red';
-      else if (number === 0) color = 'Red-Violet';
-      else if (number === 5) color = 'Green-Violet';
-      const size = number <= 4 ? 'Small' : 'Big';
-      return { resultNumber: number, resultColor: color, resultSize: size };
+      if ([1, 3, 7, 9].includes(num)) color = 'Green';
+      else if ([2, 4, 6, 8].includes(num)) color = 'Red';
+      else if (num === 0) color = 'Red-Violet';
+      else if (num === 5) color = 'Green-Violet';
+      const size = num <= 4 ? 'Small' : 'Big';
+      return { resultNumber: num, resultColor: color, resultSize: size };
+    };
+
+    const generateResult = async (gameType: string, periodId: string) => {
+      try {
+        // 1. Check for manual controls first
+        const controlsSnap = await dbInstance.collection('game_controls')
+          .where('gameType', '==', gameType)
+          .where('status', '==', 'pending')
+          .limit(10) // Get more and sort in memory if needed
+          .get();
+
+        if (!controlsSnap.empty) {
+          // Sort in memory to avoid mandatory composite index
+          const docs = controlsSnap.docs.sort((a, b) => {
+            const aTime = a.data().createdAt?.toMillis() || 0;
+            const bTime = b.data().createdAt?.toMillis() || 0;
+            return bTime - aTime;
+          });
+          
+          const controlDoc = docs[0];
+          const controlData = controlDoc.data();
+          const targetNumber = controlData.targetNumber;
+          const targetSize = controlData.targetSize;
+          
+          await controlDoc.ref.update({ status: 'used', processedAt: admin.firestore.FieldValue.serverTimestamp() });
+
+          if (targetNumber !== undefined && targetNumber !== null) return generateDetails(targetNumber);
+          if (targetSize === 'Big') {
+            const nums = [5, 6, 7, 8, 9];
+            return generateDetails(nums[Math.floor(Math.random() * nums.length)]);
+          }
+          if (targetSize === 'Small') {
+            const nums = [0, 1, 2, 3, 4];
+            return generateDetails(nums[Math.floor(Math.random() * nums.length)]);
+          }
+        }
+
+        // 2. Check System Settings
+        const settingsSnap = await dbInstance.collection('system_config').doc('settings').get();
+        const settings = settingsSnap.data();
+
+        if (settings?.autoProfit) {
+          // AUTO PROFIT MODE: Analyze all bets and pick result with least payout
+          const betsSnapshot = await dbInstance.collection('bets')
+            .where('gameType', '==', gameType)
+            .where('periodId', '==', periodId)
+            .get();
+
+          const payouts = new Array(10).fill(0);
+          betsSnapshot.forEach(doc => {
+            const bet = doc.data();
+            const amount = bet.totalAmount || (bet.amount * 1) || 0;
+            
+            for (let n = 0; n <= 9; n++) {
+              const res = generateDetails(n);
+              let win = false;
+              let mult = 0;
+              if (bet.selection === 'Green' && res.resultColor.includes('Green')) { win = true; mult = n === 5 ? 1.5 : 2; }
+              else if (bet.selection === 'Red' && res.resultColor.includes('Red')) { win = true; mult = n === 0 ? 1.5 : 2; }
+              else if (bet.selection === 'Violet' && res.resultColor.includes('Violet')) { win = true; mult = 4.5; }
+              else if (bet.selection === 'Big' && res.resultSize === 'Big') { win = true; mult = 2; }
+              else if (bet.selection === 'Small' && res.resultSize === 'Small') { win = true; mult = 2; }
+              else if (Number(bet.selection) === n) { win = true; mult = 9; }
+              
+              if (win) payouts[n] += (amount * mult);
+            }
+          });
+
+          let minPayout = Infinity;
+          let bestNumber = Math.floor(Math.random() * 10);
+          payouts.forEach((p, n) => {
+            if (p < minPayout) {
+              minPayout = p;
+              bestNumber = n;
+            }
+          });
+          return generateDetails(bestNumber);
+        }
+
+        if (settings?.randomMode === false) {
+           // If random mode is OFF and no manual/auto profit, handle as fixed (e.g., always 0 or Big)
+           // But usually users want random ON.
+        }
+
+        // 3. RANDOM MODE (Default)
+        return generateDetails(Math.floor(Math.random() * 10));
+      } catch (err) {
+        console.error('Result Generation Error:', err);
+        return generateDetails(Math.floor(Math.random() * 10));
+      }
     };
 
     // Settlement Logic
@@ -206,7 +338,7 @@ async function startServer() {
             } else {
               const round = rows[0];
               if (remainingTime <= 5 && !round.result_number && round.status === 'running') {
-                const res = generateResult();
+                const res = await generateResult(type, roundId);
                 await query('UPDATE game_rounds SET result_number = ?, result_color = ?, result_size = ? WHERE id = ?', 
                   [res.resultNumber, res.resultColor, res.resultSize, round.id]);
               }
@@ -252,7 +384,7 @@ async function startServer() {
             } else {
               const data = doc.data();
               if (remainingTime <= 5 && !data?.resultNumber && data?.status === 'running') {
-                const res = generateResult();
+                const res = await generateResult(type, roundId);
                 await roundRef.update({ 
                   resultNumber: res.resultNumber,
                   resultColor: res.resultColor,
@@ -272,7 +404,14 @@ async function startServer() {
             }
           }
         }
-      } catch (err) { console.error('Scheduler Error:', err); }
+      } catch (err: any) { 
+        console.error('Scheduler Error Details:', {
+          message: err.message,
+          code: err.code,
+          details: err.details,
+          stack: err.stack
+        }); 
+      }
     }, 500);
 
     // API Endpoints
