@@ -40,25 +40,32 @@ if (admin.apps.length === 0) {
 // Ensure dbInstance is initialized even if databaseId is problematic
 let dbInstance: admin.firestore.Firestore;
 try {
-  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || firebaseConfig.projectId;
+  const envProjectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
+  const configProjectId = firebaseConfig.projectId;
+  const projectId = envProjectId || configProjectId;
   const dbId = firebaseConfig.firestoreDatabaseId || undefined;
   
-  // Resiliency logic: If the projectId is NOT an ais-dev/ais-pre project (which are our internal ones)
-  // but the databaseId is an ai-studio-* UUID, it's likely a configuration mismatch from a remix/copy.
-  // In that case, we should default to (default).
+  console.log(`[DIAGNOSTIC] Env Project: ${envProjectId}, Config Project: ${configProjectId}`);
+
+  // Resiliency logic: If the projectId is NOT an ais-dev/ais-pre project (internal to AI Studio),
+  // we should ALWAYS default to the '(default)' database to avoid NOT_FOUND errors.
   const isInternalProject = projectId?.startsWith('ais-dev-') || projectId?.startsWith('ais-pre-') || projectId === 'ai-studio-build';
-  const looksLikeInternalDb = dbId?.startsWith('ai-studio-');
   
-  if (!isInternalProject && looksLikeInternalDb) {
-    console.warn(`Detected project/database ID mismatch. Project: ${projectId}, DB: ${dbId}. Defaulting to (default) database.`);
+  if (!isInternalProject && dbId && dbId.startsWith('ai-studio-')) {
+    console.warn(`[DIAGNOSTIC] Detected ID mismatch. Using (default) database.`);
     dbInstance = getFirestore(); 
   } else {
-    dbInstance = getFirestore(dbId);
-    console.log(`Firestore connected to Project: ${projectId}, Database: ${dbId || '(default)'}`);
+    try {
+      dbInstance = getFirestore(dbId);
+      console.log(`[DIAGNOSTIC] Initialized Firestore with Project: ${projectId}, DB: ${dbId || '(default)'}`);
+    } catch (e) {
+      console.warn(`[DIAGNOSTIC] Failed with ${dbId}. Falling back to default.`);
+      dbInstance = getFirestore();
+    }
   }
 } catch (err) {
   console.error('Firestore Instance Init Error:', err);
-  dbInstance = getFirestore(); // Fallback to default
+  dbInstance = getFirestore(); // Final fallback
 }
 
 // Check if MySQL is configured and reachable
