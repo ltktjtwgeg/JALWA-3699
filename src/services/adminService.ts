@@ -73,9 +73,10 @@ export const DEFAULT_SETTINGS: SystemSettings = {
     'trx': false
   },
   banners: [
-    { id: '1', image: '/images/slider_banner/custom_banner_1.png' },
-    { id: '2', image: '/images/slider_banner/custom_banner_2.png' },
-    { id: '3', image: '/images/slider_banner/custom_banner_3.png' }
+    { id: '1', image: '/images/slider_banner/banner1.png' },
+    { id: '2', image: '/images/slider_banner/custom_banner_1.png' },
+    { id: '3', image: '/images/slider_banner/custom_banner_2.png' },
+    { id: '4', image: '/images/slider_banner/custom_banner_3.png' }
   ],
   popupBannerUrl: '',
   showPopup: true

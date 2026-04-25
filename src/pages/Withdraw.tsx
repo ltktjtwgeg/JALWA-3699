@@ -188,7 +188,19 @@ export default function Withdraw() {
                 withdrawMethod === method.id ? "bg-white/20" : "bg-gray-800"
               )}>
                 {typeof method.icon === 'string' ? (
-                  <img src={method.icon} alt={method.name} className="w-8 h-8 object-contain" />
+                  <img 
+                    src={method.icon} 
+                    alt={method.name} 
+                    className="w-8 h-8 object-contain" 
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                      const parent = e.currentTarget.parentElement;
+                      if (parent) {
+                        if (method.id === 'upi') parent.insertAdjacentHTML('beforeend', '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-smartphone text-white"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>');
+                        else if (method.id === 'usdt') parent.insertAdjacentHTML('beforeend', '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-gem text-white"><path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/></svg>');
+                      }
+                    }}
+                  />
                 ) : (
                   <method.icon className="w-6 h-6" />
                 )}
@@ -208,8 +220,25 @@ export default function Withdraw() {
               <div className="flex items-center gap-4">
                 <div className="w-10 h-10 bg-indigo-500/20 rounded-lg flex items-center justify-center overflow-hidden">
                   {withdrawMethod === 'bank' ? <CreditCard className="w-5 h-5 text-indigo-500" /> : 
-                   withdrawMethod === 'upi' ? <img src="/images/wallet/upi.png" className="w-6 h-6 object-contain" /> : 
-                   <img src="/images/wallet/usdt.png" className="w-6 h-6 object-contain" />}
+                   withdrawMethod === 'upi' ? (
+                    <img 
+                      src="/images/wallet/upi.png" 
+                      className="w-6 h-6 object-contain" 
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        e.currentTarget.parentElement?.insertAdjacentHTML('beforeend', '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-smartphone text-indigo-500"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>');
+                      }}
+                    />
+                   ) : (
+                    <img 
+                      src="/images/wallet/usdt.png" 
+                      className="w-6 h-6 object-contain" 
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                        e.currentTarget.parentElement?.insertAdjacentHTML('beforeend', '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-gem text-indigo-500"><path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/></svg>');
+                      }}
+                    />
+                   )}
                 </div>
                 <div>
                   <p className="text-sm font-bold">{selectedMethod.name || selectedMethod.bankName || selectedMethod.alias}</p>

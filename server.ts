@@ -770,9 +770,24 @@ async function startServer() {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), fs.existsSync(path.join(process.cwd(), 'dist')) ? 'dist' : '.');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+    const distPath = path.join(process.cwd(), 'dist');
+    const publicPath = path.join(process.cwd(), 'public');
+    
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+    }
+    
+    // Always fallback to public folder for static assets if not found in dist
+    if (fs.existsSync(publicPath)) {
+      app.use(express.static(publicPath));
+    }
+    
+    app.get('*', (req, res) => {
+      const indexPath = fs.existsSync(path.join(distPath, 'index.html')) 
+        ? path.join(distPath, 'index.html')
+        : path.join(process.cwd(), 'index.html');
+      res.sendFile(indexPath);
+    });
   }
 
   // Global Error Handler

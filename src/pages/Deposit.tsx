@@ -291,14 +291,18 @@ export default function Deposit() {
                     {method.promo}
                   </div>
                 )}
-                <div className="w-10 h-10 flex items-center justify-center overflow-hidden">
+                <div className="w-10 h-10 flex items-center justify-center overflow-hidden relative">
                   <img 
                     src={method.icon} 
                     alt={method.name} 
                     className="w-full h-full object-contain"
                     onError={(e) => {
                       e.currentTarget.style.display = 'none';
-                      e.currentTarget.parentElement?.insertAdjacentHTML('beforeend', `<div class="w-full h-full bg-gray-700 rounded-lg flex items-center justify-center text-xs font-bold">${method.id.toUpperCase()}</div>`);
+                      const parent = e.currentTarget.parentElement;
+                      if (parent) {
+                        if (method.id === 'razorpay') parent.insertAdjacentHTML('beforeend', '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-credit-card text-purple-500"><rect width="20" height="14" x="2" y="5" rx="2"/><line x1="2" x2="22" y1="10" y2="10"/></svg>');
+                        else parent.insertAdjacentHTML('beforeend', '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-smartphone text-purple-500"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>');
+                      }
                     }}
                   />
                 </div>

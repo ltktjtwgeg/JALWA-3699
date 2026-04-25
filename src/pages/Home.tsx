@@ -20,9 +20,9 @@ export default function Home() {
 
   const banners = settings?.banners || [
     { id: '1', image: '/images/slider_banner/banner1.png' },
-    { id: '2', image: '/images/slider_banner/banner2.png' },
-    { id: '3', image: '/images/slider_banner/banner3.png' },
-    { id: '4', image: '/images/slider_banner/banner4.png' },
+    { id: '2', image: '/images/slider_banner/custom_banner_1.png' },
+    { id: '3', image: '/images/slider_banner/custom_banner_2.png' },
+    { id: '4', image: '/images/slider_banner/custom_banner_3.png' },
   ];
 
   useEffect(() => {
