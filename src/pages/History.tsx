@@ -19,7 +19,8 @@ import {
   where, 
   orderBy, 
   limit, 
-  onSnapshot 
+  onSnapshot,
+  getDocs
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Transaction, Bet } from '../types';
@@ -37,20 +38,24 @@ export default function History() {
   useEffect(() => {
     if (!user) return;
     setLoading(true);
+    
+    let unsub: () => void;
 
     if (type === 'game') {
       const q = query(
         collection(db, 'bets'),
         where('uid', '==', user.uid),
+        orderBy('createdAt', 'desc'),
         limit(50)
       );
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bet));
-        data.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+      unsub = onSnapshot(q, (snap) => {
+        const data = snap.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Bet));
         setBets(data);
         setLoading(false);
+      }, (err) => {
+        console.error("Game history error:", err);
+        setLoading(false);
       });
-      return () => unsubscribe();
     } else {
       let q;
       if (type === 'all') {
@@ -69,14 +74,19 @@ export default function History() {
           limit(50)
         );
       }
-
-      const unsubscribe = onSnapshot(q, (snapshot) => {
-        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+      unsub = onSnapshot(q, (snap) => {
+        const data = snap.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Transaction));
         setTransactions(data);
         setLoading(false);
+      }, (err) => {
+        console.error("Trans history error:", err);
+        setLoading(false);
       });
-      return () => unsubscribe();
     }
+
+    return () => {
+      if (unsub) unsub();
+    };
   }, [user, type]);
 
   const getTitle = () => {
@@ -164,9 +174,9 @@ export default function History() {
                 <div className="flex items-center gap-4">
                   <div className={cn(
                     "p-2 rounded-xl",
-                    (t.type === 'deposit' || t.type === 'win' || t.type?.endsWith('_win')) ? "bg-emerald-500/10" : "bg-rose-500/10"
+                    (t.type === 'deposit' || t.type === 'win' || t.type === 'bonus' || t.type?.endsWith('_win')) ? "bg-emerald-500/10" : "bg-rose-500/10"
                   )}>
-                    {(t.type === 'deposit' || t.type === 'win' || t.type?.endsWith('_win')) ? (
+                    {(t.type === 'deposit' || t.type === 'win' || t.type === 'bonus' || t.type?.endsWith('_win')) ? (
                       <ArrowDownCircle className="w-5 h-5 text-emerald-500" />
                     ) : (
                       <ArrowUpCircle className="w-5 h-5 text-rose-500" />
@@ -181,9 +191,9 @@ export default function History() {
                 <div className="text-right">
                   <p className={cn(
                     "font-bold",
-                    (t.type === 'deposit' || t.type === 'win' || t.type?.endsWith('_win')) ? "text-emerald-500" : "text-rose-500"
+                    (t.type === 'deposit' || t.type === 'win' || t.type === 'bonus' || t.type?.endsWith('_win')) ? "text-emerald-500" : "text-rose-500"
                   )}>
-                    {(t.type === 'deposit' || t.type === 'win' || t.type?.endsWith('_win')) ? '+' : '-'}{formatCurrency(t.amount)}
+                    {(t.type === 'deposit' || t.type === 'win' || t.type === 'bonus' || t.type?.endsWith('_win')) ? '+' : '-'}{formatCurrency(t.amount)}
                   </p>
                   <div className="flex items-center justify-end gap-1">
                     {t.status === 'completed' ? (

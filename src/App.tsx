@@ -69,59 +69,60 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let unsubscribeProfile: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, async (fUser) => {
       setFirebaseUser(fUser);
+      
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+      }
+
       if (fUser) {
-        // Sync with MySQL if enabled
-        syncUser(fUser.uid, fUser.displayName || 'User', fUser.email || '');
-        
-        // Fetch app user data
-        const userDoc = await getDoc(doc(db, 'users', fUser.uid));
-        if (userDoc.exists()) {
-          setUser(userDoc.data() as AppUser);
-        } else {
-          setUser(null);
+        // Immediate load from cache
+        const cached = localStorage.getItem(`user_profile_${fUser.uid}`);
+        if (cached) {
+          setUser(JSON.parse(cached));
+          setLoading(false);
         }
+        
+        // Real-time listener for current user (Instant balance updates)
+        unsubscribeProfile = onSnapshot(doc(db, 'users', fUser.uid), (snap) => {
+          if (snap.exists()) {
+            const userData = snap.data() as AppUser;
+            console.log('[PROFILE] Updated:', userData.uid, 'Balance:', userData.balance);
+            setUser(userData);
+            localStorage.setItem(`user_profile_${fUser.uid}`, JSON.stringify(userData));
+          }
+          setLoading(false);
+        }, (err) => {
+          console.error("Profile snapshot error:", err);
+          if (err.message.includes('permission-denied') || err.message.includes('Missing or insufficient permissions')) {
+             // Fallback to a basic user object if rules block reading
+             const cached = localStorage.getItem(`user_profile_${fUser.uid}`);
+             if (cached) {
+               setUser(JSON.parse(cached));
+             } else {
+               setUser({ uid: fUser.uid, email: fUser.email, username: fUser.email?.split('@')[0], balance: 0 } as any);
+             }
+          }
+          setLoading(false);
+        });
+        
+        // Sync with MySQL if enabled
+        syncUser(fUser.uid, fUser.displayName || 'User', fUser.email || '').catch(() => {});
       } else {
         setUser(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (unsubscribeProfile) (unsubscribeProfile as () => void)();
+    };
   }, []);
-
-  // Listen for real-time user updates (balance, etc)
-  useEffect(() => {
-    if (firebaseUser) {
-      const unsubscribe = onSnapshot(doc(db, 'users', firebaseUser.uid), (userDoc) => {
-        if (userDoc.exists()) {
-          const userData = userDoc.data() as AppUser;
-          
-          // Daily Reset Logic
-          const lastReset = userData.lastStatsResetAt?.toDate();
-          const now = new Date();
-          const isDifferentDay = !lastReset || 
-            lastReset.getDate() !== now.getDate() || 
-            lastReset.getMonth() !== now.getMonth() || 
-            lastReset.getFullYear() !== now.getFullYear();
-
-          if (isDifferentDay) {
-            import('firebase/firestore').then(({ updateDoc, Timestamp }) => {
-              updateDoc(userDoc.ref, {
-                dailyDeposits: 0,
-                dailyBets: 0,
-                lastStatsResetAt: Timestamp.now()
-              });
-            });
-          }
-          
-          setUser(userData);
-        }
-      });
-      return () => unsubscribe();
-    }
-  }, [firebaseUser]);
 
   const refreshUser = async () => {
     if (firebaseUser) {
@@ -145,39 +146,6 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   return firebaseUser ? <>{children}</> : <Navigate to="/login" />;
 }
 
-import { processGameResults, settleUserBets } from './services/gameService';
-
-function GameManager() {
-  const { firebaseUser } = useAuth();
-
-  useEffect(() => {
-    if (!firebaseUser) return;
-
-    let isRunning = false;
-    const runManager = async () => {
-      if (isRunning) return;
-      isRunning = true;
-      
-      try {
-        const types: GameType[] = ['30s', '1m', '3m', '5m'];
-        for (const type of types) {
-          await processGameResults(type);
-          await settleUserBets(firebaseUser.uid, type);
-        }
-      } catch (error) {
-        console.error('Error in GameManager:', error);
-      } finally {
-        isRunning = false;
-      }
-    };
-
-    const interval = setInterval(runManager, 1000);
-    return () => clearInterval(interval);
-  }, [firebaseUser]);
-
-  return null;
-}
-
 export default function App() {
   useEffect(() => {
     // Persist invitation code from URL if present
@@ -189,10 +157,15 @@ export default function App() {
 
     async function testConnection() {
       try {
+        // Try a simple read to check connectivity
         await getDoc(doc(db, 'test', 'connection'));
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration.");
+      } catch (error: any) {
+        if (error?.message?.includes('the client is offline')) {
+          console.warn("Firestore client is offline. This might be temporary in dev environments.");
+        } else if (error?.code === 'not-found' || error?.message?.includes('NOT_FOUND')) {
+          // Document not found is fine, connectivty works
+        } else {
+          console.error("Firestore connectivity check error:", error);
         }
       }
     }
@@ -201,7 +174,6 @@ export default function App() {
 
   return (
     <AuthProvider>
-      <GameManager />
       <div className="min-h-screen bg-[#1a1d21] text-white font-sans overflow-x-hidden">
         <BrowserRouter>
           <Routes>

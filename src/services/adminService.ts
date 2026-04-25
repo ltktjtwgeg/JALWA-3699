@@ -34,6 +34,7 @@ export interface SystemSettings {
   salaryBonus: number;
   maintenanceMode: boolean;
   commissionRate: number;
+  depositBonusPercentage: number;
   upiId: string;
   upiImage?: string;
   usdtAddress: string;
@@ -42,6 +43,7 @@ export interface SystemSettings {
   banners?: Banner[];
   popupBannerUrl?: string;
   showPopup?: boolean;
+  minesMode?: 'random' | 'force_win' | 'force_loss';
 }
 
 export const DEFAULT_SETTINGS: SystemSettings = {
@@ -54,8 +56,10 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   salaryBonus: 10,
   maintenanceMode: false,
   commissionRate: 0.02,
+  depositBonusPercentage: 2,
   upiId: '',
   usdtAddress: '',
+  minesMode: 'random',
   gameStatuses: {
     '1m': true,
     '30s': true,
@@ -152,11 +156,16 @@ export async function getAdminStats() {
 
 export async function getGamePoolStats(type: GameType) {
   const duration = GAME_DURATIONS[type];
-  const now = Math.floor(Date.now() / 1000);
-  const currentRoundIndex = Math.floor(now / duration);
-  const targetDate = new Date(now * 1000);
+  const now = Date.now();
+  const durMs = duration * 1000;
+  const currentRoundIndex = Math.floor(now / durMs);
+  const targetDate = new Date(currentRoundIndex * durMs);
+  
   const dateStr = targetDate.toISOString().slice(0, 10).replace(/-/g, '');
-  const currentPeriodId = `${dateStr}${currentRoundIndex}`;
+  const dayStart = new Date(targetDate);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const dayIndex = Math.floor((targetDate.getTime() - dayStart.getTime()) / durMs) + 1;
+  const currentPeriodId = `${dateStr}${dayIndex.toString().padStart(4, '0')}`;
   
   const betsQ = query(
     collection(db, 'bets'),
@@ -197,6 +206,7 @@ export async function getGamePoolStats(type: GameType) {
 }
 
 export async function setGameControl(type: GameType, targetSize?: string, targetNumber?: number) {
+  const docId = `wingo_next_${type}`;
   const data: any = {
     type: 'wingo',
     gameType: type,
@@ -204,10 +214,19 @@ export async function setGameControl(type: GameType, targetSize?: string, target
     createdAt: serverTimestamp()
   };
   
-  if (targetSize !== undefined && targetSize !== null) data.targetSize = targetSize;
-  if (targetNumber !== undefined && targetNumber !== null) data.targetNumber = targetNumber;
+  // If both are undefined, it means we are clearing the override
+  if (targetSize === undefined && targetNumber === undefined) {
+    // We can either delete the doc or update it to 'cancelled'
+    // To keep simple, we'll just set target fields to null
+    data.targetSize = null;
+    data.targetNumber = null;
+    data.status = 'deleted'; // Not used by server
+  } else {
+    if (targetSize !== undefined && targetSize !== null) data.targetSize = targetSize;
+    if (targetNumber !== undefined && targetNumber !== null) data.targetNumber = targetNumber;
+  }
   
-  await addDoc(collection(db, 'game_controls'), data);
+  await setDoc(doc(db, 'game_controls', docId), data);
 }
 
 export async function createGiftCode(code: string, amount: number, maxUses: number) {
@@ -245,68 +264,77 @@ export async function getPendingTransactions(type: 'deposit' | 'withdraw') {
 }
 
 export async function updateTransactionStatus(id: string, status: 'completed' | 'rejected', uid: string) {
-  const transRef = doc(db, 'transactions', id);
-  const transSnap = await getDoc(transRef);
-  if (!transSnap.exists()) return;
+  const { runTransaction } = await import('firebase/firestore');
   
-  const transData = transSnap.data();
-  if (transData.status !== 'pending') return;
+  try {
+    await runTransaction(db, async (transaction) => {
+      const transRef = doc(db, 'transactions', id);
+      const userRef = doc(db, 'users', uid);
+      const settingsRef = doc(db, 'system_config', 'settings');
 
-  const userRef = doc(db, 'users', uid);
-  
-  if (status === 'completed') {
-    if (transData.type === 'deposit') {
-      const userSnap = await getDoc(userRef);
-      const userData = userSnap.data();
-      const isFirstDeposit = !userData?.totalDeposits || userData?.totalDeposits === 0;
-      
-      let bonusAmount = 0;
-      if (isFirstDeposit) {
-        // Calculate based on fixed rules first
-        if (transData.amount >= 1000) bonusAmount = 188;
-        else if (transData.amount >= 500) bonusAmount = 108;
-        else if (transData.amount >= 300) bonusAmount = 28;
-        else if (transData.amount >= 100) bonusAmount = 18;
+      const [transSnap, settingsSnap] = await Promise.all([
+        transaction.get(transRef),
+        transaction.get(settingsRef)
+      ]);
 
-        // If no fixed rule matched, try percentage if configured
-        if (bonusAmount === 0) {
-          const settingsSnap = await getDoc(doc(db, 'system_config', 'settings'));
-          const commissionRate = settingsSnap.data()?.commissionRate || 0;
-          bonusAmount = transData.amount * commissionRate;
+      if (!transSnap.exists()) throw new Error('Transaction not found');
+      const transData = transSnap.data();
+      if (transData.status !== 'pending') throw new Error('Transaction already processed');
+
+      if (status === 'completed' && transData.type === 'deposit') {
+        const userSnap = await transaction.get(userRef);
+        if (!userSnap.exists()) throw new Error('User not found');
+        const userData = userSnap.data();
+        
+        const isFirstDeposit = !userData?.totalDeposits || userData.totalDeposits === 0;
+        const settingsData = settingsSnap.exists() ? settingsSnap.data() : DEFAULT_SETTINGS;
+        const bonusPercent = settingsData?.depositBonusPercentage || 0;
+        
+        // Calculate normal deposit bonus for all deposits
+        let bonusAmount = transData.amount * (bonusPercent / 100);
+
+        // Add First Deposit Bonus if applicable
+        if (isFirstDeposit) {
+          if (transData.amount >= 1000) bonusAmount += 188;
+          else if (transData.amount >= 500) bonusAmount += 108;
+          else if (transData.amount >= 300) bonusAmount += 28;
+          else if (transData.amount >= 100) bonusAmount += 18;
         }
-      }
 
-      const totalAdd = transData.amount + bonusAmount;
+        const totalAdd = transData.amount + bonusAmount;
 
-      await updateDoc(userRef, { 
-        balance: increment(totalAdd),
-        totalDeposits: increment(transData.amount),
-        dailyDeposits: increment(transData.amount),
-        requiredTurnover: increment(transData.amount)
-      });
-
-      if (bonusAmount > 0) {
-        await addDoc(collection(db, 'transactions'), {
-          uid,
-          type: 'bonus',
-          amount: bonusAmount,
-          status: 'completed',
-          description: 'First Deposit Bonus',
-          createdAt: serverTimestamp()
+        transaction.update(userRef, { 
+          balance: increment(totalAdd),
+          totalDeposits: increment(transData.amount),
+          dailyDeposits: increment(transData.amount),
+          requiredTurnover: increment(totalAdd)
         });
-      }
-    }
-  } else if (status === 'rejected') {
-    if (transData.type === 'withdraw') {
-      // Refund balance if withdrawal rejected
-      await updateDoc(userRef, { balance: increment(transData.amount) });
-    }
-  }
 
-  await updateDoc(transRef, { 
-    status, 
-    updatedAt: serverTimestamp() 
-  });
+        if (bonusAmount > 0) {
+          const bonusRef = doc(collection(db, 'transactions'));
+          transaction.set(bonusRef, {
+            uid,
+            type: 'bonus',
+            amount: bonusAmount,
+            status: 'completed',
+            description: `Deposit Bonus (${bonusPercent}%) ${isFirstDeposit ? '+ First Deposit Reward' : ''}`,
+            createdAt: serverTimestamp()
+          });
+        }
+      } else if (status === 'rejected' && transData.type === 'withdraw') {
+        // Refund balance if withdrawal rejected
+        transaction.update(userRef, { balance: increment(transData.amount) });
+      }
+
+      transaction.update(transRef, { 
+        status, 
+        updatedAt: serverTimestamp() 
+      });
+    });
+  } catch (error: any) {
+    console.error('UpdateTransactionStatus error:', error);
+    throw error;
+  }
 }
 
 export async function setMinesControl(targetUsername: string, targetMines: number[]) {

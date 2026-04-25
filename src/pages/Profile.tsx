@@ -4,6 +4,7 @@ import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
 import { 
+  User,
   Settings, 
   Shield, 
   LogOut, 
@@ -33,7 +34,7 @@ import { toast } from 'sonner';
 import { formatCurrency, cn } from '../lib/utils';
 
 export default function Profile() {
-  const { user } = useAuth();
+  const { user, firebaseUser, loading } = useAuth();
   const navigate = useNavigate();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -62,43 +63,86 @@ export default function Profile() {
     }
   };
 
-  return (
-    <div className="flex flex-col min-h-screen pb-24 bg-[#1a1d21] text-white">
-      {/* Profile Header Section */}
-      <div className="relative pt-12 pb-24 px-6 bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md border-2 border-white/40 overflow-hidden flex items-center justify-center shadow-xl">
-            <img 
-              src={user?.avatarUrl || '/images/avatars/1.png'} 
-              alt="avatar" 
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <h2 className="text-xl font-black tracking-tight text-white uppercase">{user?.nickname || user?.username || 'MEMBER'}</h2>
-              <div className="bg-white/30 backdrop-blur-md px-2 py-0.5 rounded flex items-center gap-1 border border-white/40">
-                <Trophy className="w-3 h-3 text-yellow-300" />
-                <span className="text-[10px] font-bold text-white">VIP{user?.vipLevel || 0}</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 text-white/80 text-xs mb-1">
-              <span className="font-bold">UID</span>
-              <span className="font-mono">|</span>
-              <span className="font-mono font-bold">{user?.inviteCode}</span>
-              <button onClick={handleCopyUid} className="p-1 hover:bg-white/10 rounded">
-                <Copy className="w-3 h-3" />
-              </button>
-            </div>
-            <p className="text-[10px] text-white/70 font-medium">
-              {new Date().toLocaleString()}
-            </p>
-            <p className="text-[10px] text-white/70 font-medium">
-              Last login: {user?.lastLoginAt?.toDate().toLocaleString() || 'N/A'}
-            </p>
-          </div>
+  const formatDate = (date: any) => {
+    try {
+      if (!date) return 'N/A';
+      if (typeof date.toDate === 'function') {
+        return date.toDate().toLocaleString();
+      }
+      if (date.seconds !== undefined) {
+        return new Date(date.seconds * 1000).toLocaleString();
+      }
+      return new Date(date).toLocaleString();
+    } catch (e) {
+      return 'N/A';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#1a1d21] text-white">
+        <RefreshCw className="w-8 h-8 text-purple-500 animate-spin mb-4" />
+        <p className="text-gray-400 font-medium tracking-tight">Loading Profile...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#1a1d21] p-6 text-center">
+        <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center mb-4">
+           <User className="w-8 h-8 text-rose-500" />
         </div>
+        <h2 className="text-xl font-bold mb-2">Account Error</h2>
+        <p className="text-gray-400 mb-6">We couldn't load your profile data. Please try logging in again.</p>
+        <button 
+          onClick={() => navigate('/login')} 
+          className="w-full py-3 bg-purple-600 rounded-xl font-bold hover:bg-purple-700 transition-colors"
+        >
+          Back to Login
+        </button>
+      </div>
+    );
+  }
+
+  try {
+    return (
+      <div className="flex flex-col min-h-screen pb-24 bg-[#1a1d21] text-white">
+        {/* Profile Header Section */}
+        <div className="relative pt-12 pb-24 px-6 bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-md border-2 border-white/40 overflow-hidden flex items-center justify-center shadow-xl">
+              <img 
+                src={user?.avatarUrl || '/images/avatars/1.png'} 
+                alt="avatar" 
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <h2 className="text-xl font-black tracking-tight text-white uppercase">{user?.nickname || user?.username || 'MEMBER'}</h2>
+                <div className="bg-white/30 backdrop-blur-md px-2 py-0.5 rounded flex items-center gap-1 border border-white/40">
+                  <Trophy className="w-3 h-3 text-yellow-300" />
+                  <span className="text-[10px] font-bold text-white">VIP{user?.vipLevel || 0}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-white/80 text-xs mb-1">
+                <span className="font-bold">UID</span>
+                <span className="font-mono">|</span>
+                <span className="font-mono font-bold">{user?.inviteCode}</span>
+                <button onClick={handleCopyUid} className="p-1 hover:bg-white/10 rounded">
+                  <Copy className="w-3 h-3" />
+                </button>
+              </div>
+              <p className="text-[10px] text-white/70 font-medium">
+                {new Date().toLocaleString()}
+              </p>
+              <p className="text-[10px] text-white/70 font-medium">
+                Last login: {formatDate(user?.lastLoginAt)}
+              </p>
+            </div>
+          </div>
 
         {/* Balance Card Overlay */}
         <div className="absolute -bottom-16 left-6 right-6 bg-[#2a2e35] rounded-3xl p-6 shadow-2xl border border-gray-800">
@@ -195,7 +239,7 @@ export default function Profile() {
             { icon: Gift, label: 'Gifts', path: '/gift' },
             { icon: BarChart3, label: 'Game statistics', path: '/game-statistics' },
             { icon: Globe, label: 'Language', extra: 'English', path: '/language' },
-            ...(user?.role === 'admin' || user?.email === "triloksinghrathore51@gmail.com" ? [
+            ...(user?.role === 'admin' || user?.email === "triloksinghrathore51@gmail.com" || firebaseUser?.email === "triloksinghrathore51@gmail.com" ? [
               { icon: Shield, label: 'Super Admin', path: '/super-admin' },
               { icon: Settings, label: 'Admin Panel', path: '/admin' }
             ] : []),
@@ -256,4 +300,14 @@ export default function Profile() {
       <BottomNav />
     </div>
   );
+  } catch (e: any) {
+    console.error("Profile Render Error:", e);
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#1a1d21] p-6 text-center">
+        <h2 className="text-xl font-bold text-rose-500 mb-2">Display Error</h2>
+        <p className="text-sm text-gray-400 mb-6">{e.message}</p>
+        <button onClick={() => window.location.reload()} className="px-6 py-2 bg-purple-600 rounded-lg">Retry</button>
+      </div>
+    );
+  }
 }

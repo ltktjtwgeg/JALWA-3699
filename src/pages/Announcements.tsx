@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, Megaphone } from 'lucide-react';
 import { motion } from 'motion/react';
-import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 
 interface Announcement {
@@ -18,17 +18,22 @@ export default function Announcements() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(20));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Announcement[];
-      setAnnouncements(data);
-      setLoading(false);
-    });
-
-    return () => unsubscribe();
+    const fetchAnnouncements = async () => {
+      const q = query(collection(db, 'announcements'), orderBy('createdAt', 'desc'), limit(20));
+      try {
+        const snapshot = await getDocs(q);
+        const data = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...(doc.data() as any)
+        })) as Announcement[];
+        setAnnouncements(data);
+      } catch (e) {
+        console.error("Announcements fetch error:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchAnnouncements();
   }, []);
 
   return (

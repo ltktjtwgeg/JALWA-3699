@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth, db } from '../firebase';
-import { doc, updateDoc, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { toast } from 'sonner';
-import { Mail, Phone, Lock, Eye, EyeOff, ArrowRight, ChevronLeft, Globe, Headphones, UserCircle } from 'lucide-react';
+import { Mail, Phone, Lock, Eye, EyeOff, ChevronLeft, Headphones } from 'lucide-react';
 import { motion } from 'motion/react';
 
 export default function Login() {
@@ -14,35 +14,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [demoUsers, setDemoUsers] = useState<any[]>([]);
-  const [showDemoList, setShowDemoList] = useState(false);
   const navigate = useNavigate();
-
-  useEffect(() => {
-    const fetchDemos = async () => {
-      try {
-        const q = query(collection(db, 'users'), where('isDemo', '==', true));
-        const snap = await getDocs(q);
-        setDemoUsers(snap.docs.map(d => d.data()));
-      } catch (e) {
-        console.error('Error fetching demo users:', e);
-      }
-    };
-    fetchDemos();
-  }, []);
-
-  const handleDemoLogin = async (demoUser: any) => {
-    setLoading(true);
-    try {
-      await signInWithEmailAndPassword(auth, demoUser.email, 'password123');
-      toast.success(`Logged in as ${demoUser.username}`);
-      navigate('/');
-    } catch (error: any) {
-      toast.error('Demo login failed');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -234,18 +206,6 @@ export default function Login() {
               </div>
               <span className="text-[10px] text-gray-500">Forgot password</span>
             </button>
-            {demoUsers.length > 0 && (
-              <button 
-                type="button" 
-                onClick={() => setShowDemoList(!showDemoList)}
-                className="flex flex-col items-center gap-1 group"
-              >
-                <div className="w-10 h-10 bg-purple-600/20 rounded-full flex items-center justify-center group-hover:bg-purple-500/40 transition-all border border-purple-500/30">
-                  <UserCircle className="w-5 h-5 text-purple-400" />
-                </div>
-                <span className="text-[10px] text-purple-400 font-bold">Demo Login</span>
-              </button>
-            )}
             <button 
               type="button" 
               onClick={() => navigate('/customer-service')}
@@ -257,29 +217,6 @@ export default function Login() {
               <span className="text-[10px] text-gray-500">Customer Service</span>
             </button>
           </div>
-
-          {showDemoList && (
-            <motion.div 
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              className="bg-[#2a2e35] rounded-2xl p-4 border border-purple-500/20 space-y-3"
-            >
-              <p className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Select Demo Account</p>
-              <div className="grid grid-cols-1 gap-2">
-                {demoUsers.map((u) => (
-                  <button
-                    key={u.uid}
-                    type="button"
-                    onClick={() => handleDemoLogin(u)}
-                    className="flex items-center justify-between p-3 bg-black/20 rounded-xl hover:bg-black/40 transition-all border border-white/5"
-                  >
-                    <span className="text-xs font-bold text-gray-300">{u.username}</span>
-                    <ArrowRight className="w-3 h-3 text-purple-500" />
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          )}
         </motion.form>
       </div>
     </div>

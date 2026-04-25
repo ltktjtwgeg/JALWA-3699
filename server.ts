@@ -1,602 +1,790 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import express from 'express';
-import { createServer as createViteServer } from 'vite';
+// Fix for unhandled rejections causing silent crashes
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err);
+});
+
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import admin from 'firebase-admin';
-import { getFirestore } from 'firebase-admin/firestore';
-import { query } from './src/lib/mysql'; 
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load Firebase Config with path resiliency
+// Load Firebase Config with path resiliency AS EARLY AS POSSIBLE
 let firebaseConfig: any;
 try {
   const configPath = fs.existsSync(path.join(__dirname, 'firebase-applet-config.json')) 
     ? path.join(__dirname, 'firebase-applet-config.json')
     : path.join(process.cwd(), 'firebase-applet-config.json');
   firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  
+  // CRITICAL: Set environment variables before admin SDK is used or complex imports occur
+  if (firebaseConfig.projectId) {
+    process.env.GOOGLE_CLOUD_PROJECT = firebaseConfig.projectId;
+    process.env.GCLOUD_PROJECT = firebaseConfig.projectId;
+  }
 } catch (err) {
   console.error('Core Error: Missing firebase-applet-config.json');
   firebaseConfig = { projectId: process.env.FIREBASE_PROJECT_ID };
 }
 
-// Initialize Firebase Admin
-/**
- * PRODUCTION CHECKLIST FOR HOSTINGER DEPLOYMENT:
- * 1. Database: Update DB_HOST to 'srv2213.hstgr.io' (IP: 31.97.2.1).
- * 2. Domains: Add your domains to Firebase Console > Authentication > Settings > Authorized Domains:
- *    - seashell-tiger-696001.hostingersite.com
- *    - jalwa369.com
- * 3. Secrets: Set FIREBASE_SERVICE_ACCOUNT_JSON in your hosting environment.
- */
-if (admin.apps.length === 0) {
-  const projectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || firebaseConfig.projectId;
-  const serviceAccountVar = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+import express from 'express';
+import { createServer as createViteServer } from 'vite';
+import admin from 'firebase-admin';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { query } from './src/lib/mysql'; 
+import Razorpay from 'razorpay';
+import crypto from 'crypto';
+
+// Global service instances
+let dbInstance: admin.firestore.Firestore;
+let lastFirestoreError: string | null = null;
+let razorpay: Razorpay | null = null;
+let isMysqlEnabled = false;
+
+// Finalized Firebase initialization function
+async function initFirestore() {
+  console.log('[INIT] Starting Firestore initialization...');
   
   try {
-    if (serviceAccountVar) {
-      const serviceAccount = JSON.parse(serviceAccountVar);
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        projectId: projectId
-      });
-      console.log(`Firebase Admin initialized with Service Account JSON for project: ${projectId}`);
-    } else {
-      admin.initializeApp({
-        projectId: projectId
-      });
-      console.log(`Initializing Firebase Admin with Default Credentials for project: ${projectId}`);
+    const pId = firebaseConfig.projectId;
+    const dId = firebaseConfig.firestoreDatabaseId;
+
+    // Reset admin apps
+    if (admin.apps.length > 0) {
+      await Promise.all(admin.apps.map(app => app ? app.delete() : Promise.resolve()));
     }
-  } catch (err) {
-    console.error('Firebase Admin Init Error:', err);
-    // Try minimal init as fallback
-    try { admin.initializeApp({ projectId }); } catch(e) {}
-  }
-}
 
-// Ensure dbInstance is initialized even if databaseId is problematic
-let dbInstance: admin.firestore.Firestore;
-
-async function initFirestore() {
-  try {
-    const envProjectId = process.env.FIREBASE_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT;
-    const envDbId = process.env.FIREBASE_DATABASE_ID;
-    const configProjectId = firebaseConfig.projectId;
-    const configDbId = firebaseConfig.firestoreDatabaseId;
+    console.log(`[INIT] Initializing Firebase App with Project: ${pId}`);
     
-    console.log(`[DIAGNOSTIC] App Starting. Env: {P: ${envProjectId}, D: ${envDbId}}, Config: {P: ${configProjectId}, D: ${configDbId}}`);
+    // Explicitly use the project ID from the config
+    const app = admin.initializeApp({ 
+      projectId: pId,
+    });
 
-    const tryInit = async (pId: string, dId: string | undefined) => {
-      console.log(`[TRY] Initializing with Project: ${pId}, DB: ${dId || '(default)'}`);
-      
-      // Re-initialize admin if project ID differs from current
-      if (!admin.apps.length) {
-        admin.initializeApp({ projectId: pId });
-      } else if (admin.app().options.projectId !== pId) {
-        console.log(`[RE-INIT] Project change: ${admin.app().options.projectId} -> ${pId}`);
-        await admin.app().delete();
-        admin.initializeApp({ projectId: pId });
-      }
-      
-      const db = getFirestore(dId);
-      // Canary Check: Try to just get the collection reference (no read yet)
-      const healthRef = db.collection('health').doc('check');
-      // Actually try to read or write a small thing to confirm NOT_FOUND catch
-      await healthRef.get().catch(e => {
-        // If it's just "document not found", that's SUCCESS (the DB exists)
-        // If it's 5 NOT_FOUND (Database not found) or 7 PERMISSION_DENIED, then we fail.
-        const isNotFound = e.code === 5 || (e.message && e.message.includes('NOT_FOUND') && !e.message.includes('document'));
-        const isPermissionDenied = e.code === 7 || (e.message && e.message.includes('PERMISSION_DENIED'));
-        
-        if (isNotFound || isPermissionDenied) {
-           throw e;
-        }
+    const dbId = dId && dId !== '(default)' ? dId : undefined;
+    
+    // Explicit constructor is often more reliable for specific project/database routing
+    dbInstance = new admin.firestore.Firestore({
+      projectId: pId,
+      databaseId: dbId
+    });
+    
+    // Test connectivity
+    try {
+      const testDoc = dbInstance.collection('_health_').doc('boot');
+      await testDoc.set({ 
+        time: FieldValue.serverTimestamp(), 
+        status: 'online',
+        project: pId,
+        database: dbId || 'default'
       });
-      return db;
-    };
-
-    // Priority 1: Configuration File (usually most accurate in AI Studio remixed apps)
-    if (configProjectId) {
-      try {
-        dbInstance = await tryInit(configProjectId, configDbId);
-        console.log(`[SUCCESS] Firestore connected via Config: ${configDbId || '(default)'}`);
-        return;
-      } catch (e) {
-        console.warn(`[WARN] Config-based init failed, trying fallbacks...`);
-      }
+      await testDoc.delete();
+      lastFirestoreError = null;
+      console.log(`[CONNECTED] Firestore active on ${pId} (${dbId || 'default'})`);
+    } catch (e: any) {
+      lastFirestoreError = e.message;
+      console.error(`[WARN] Firestore connectivity test failed: ${e.message}`);
+      // If we see the "Cloud Firestore API has not been used" error here, 
+      // it means even with explicit ID, the credential doesn't have access or it's the wrong project.
     }
-
-    // Priority 2: Environment Variables
-    if (envProjectId) {
-      try {
-        dbInstance = await tryInit(envProjectId, envDbId);
-        console.log(`[SUCCESS] Firestore connected via Env: ${envDbId || '(default)'}`);
-        return;
-      } catch (e) {
-        console.warn(`[WARN] Env-based init failed.`);
-      }
-    }
-
-    // Final Attempt: Default everything
-    console.log(`[FINAL] Attempting default initialization...`);
-    dbInstance = getFirestore();
-  } catch (err) {
-    console.error('CRITICAL: Firestore Initialization Failed:', err);
-    // Even if it fails, we set a placeholder to avoid undefined errors, 
-    // although operations will still fail.
-    if (!dbInstance) dbInstance = getFirestore();
+  } catch (e: any) {
+    console.error('[FATAL] Firestore setup failed:', e.message);
   }
 }
 
-// Check if MySQL is configured and reachable
-let isMysqlEnabled = !!process.env.DB_HOST && !!process.env.DB_USER && !!process.env.DB_NAME;
+async function ensureSystemSettings() {
+  if (!dbInstance) return;
+  try {
+    const settingsRef = dbInstance.collection('system_config').doc('settings');
+    const doc = await settingsRef.get();
+    if (!doc.exists) {
+      await settingsRef.set({
+        autoProfit: false, randomMode: true, wingoRandomMode: true,
+        depositBonusPercentage: 2, withdrawLimit: 500, maintenanceMode: false,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+    }
+  } catch (e) {}
+}
+
+const initRazorpay = () => {
+  if (process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET) {
+    razorpay = new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
+    console.log('Razorpay initialized');
+  }
+};
 
 async function checkMysqlConnection() {
-  if (!isMysqlEnabled) return false;
+  if (!process.env.DB_HOST) return false;
   try {
     const { query: testQuery } = await import('./src/lib/mysql');
-    // Add a race to avoid hanging forever on poor connection
-    const connectionTest = Promise.race([
-      testQuery('SELECT 1'),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('MySQL connection timeout')), 5000))
-    ]);
-    await connectionTest;
+    await Promise.race([testQuery('SELECT 1'), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))]);
     return true;
-  } catch (err) {
-    console.error('MySQL Connection Failed. Falling back to Firebase mode.', (err as any).message);
-    return false;
-  }
+  } catch (e) { return false; }
 }
+
+// Game History Cache
+const gameHistoryCache = new Map<string, any[]>();
+const GAME_MODES = { '30s': 30, '1m': 60, '3m': 180, '5m': 300 };
+
+// Result Generator Logic
+const generateDetails = (num: number) => {
+  const color = [1,3,7,9].includes(num) ? 'Green' : ([2,4,6,8].includes(num) ? 'Red' : (num === 0 ? 'Red-Violet' : 'Green-Violet'));
+  return { resultNumber: num, resultColor: color, resultSize: num <= 4 ? 'Small' : 'Big' };
+};
+
+const generateResult = async (gameType: string, periodId: string) => {
+  if (!dbInstance) return generateDetails(Math.floor(Math.random()*10));
+  try {
+    const specificDoc = await dbInstance.collection('game_controls').doc(`wingo_next_${gameType}`).get();
+    let controlUsed = false;
+    let targetNum: number | undefined = undefined;
+
+    if (specificDoc.exists && specificDoc.data()?.status === 'pending') {
+      const control = specificDoc.data();
+      targetNum = control?.targetNumber;
+      if (targetNum === undefined && control?.targetSize) {
+        const sizeNums = control.targetSize === 'Big' ? [5,6,7,8,9] : [0,1,2,3,4];
+        targetNum = sizeNums[Math.floor(Math.random() * sizeNums.length)];
+      }
+      
+      if (targetNum !== undefined) {
+         await specificDoc.ref.update({ 
+          status: 'used', 
+          usedAt: FieldValue.serverTimestamp(),
+          usedInPeriod: periodId 
+        });
+        controlUsed = true;
+        return generateDetails(targetNum);
+      }
+    }
+
+    if (!controlUsed) {
+      const controlSnap = await dbInstance.collection('game_controls')
+        .where('type', '==', 'wingo')
+        .where('gameType', '==', gameType)
+        .where('status', '==', 'pending')
+        .limit(10)
+        .get();
+
+      if (!controlSnap.empty) {
+        // Sort in memory to avoid index requirements
+        const sortedDocs = controlSnap.docs.sort((a, b) => {
+          const aTime = a.data().createdAt?.toMillis() || 0;
+          const bTime = b.data().createdAt?.toMillis() || 0;
+          return bTime - aTime; // desc order
+        });
+        
+        const controlDoc = sortedDocs[0];
+        const control = controlDoc.data();
+        targetNum = control.targetNumber;
+        if (targetNum === undefined && control.targetSize) {
+          const sizeNums = control.targetSize === 'Big' ? [5,6,7,8,9] : [0,1,2,3,4];
+          targetNum = sizeNums[Math.floor(Math.random() * sizeNums.length)];
+        }
+
+        if (targetNum !== undefined) {
+          await controlDoc.ref.update({ 
+            status: 'used', 
+            usedAt: FieldValue.serverTimestamp(),
+            usedInPeriod: periodId 
+          });
+          return generateDetails(targetNum);
+        }
+      }
+    }
+
+    const settingsSnap = await dbInstance.collection('system_config').doc('settings').get();
+    const settings = settingsSnap.data();
+    const isAutoControl = settings?.wingoAutoControl ?? settings?.autoProfit ?? false;
+    const isRandomMode = settings?.wingoRandomMode ?? settings?.randomMode ?? true;
+
+    if (isAutoControl && !isRandomMode) {
+      const bets = await dbInstance.collection('bets').where('gameType', '==', gameType).where('periodId', '==', periodId).get();
+      const payouts = new Array(10).fill(0);
+      bets.forEach(d => {
+        const b = d.data();
+        for (let n=0; n<=9; n++) {
+          const r = generateDetails(n);
+          if (b.selection === r.resultColor || b.selection === r.resultSize || Number(b.selection) === n) payouts[n] += (b.amount || 0);
+        }
+      });
+      const minPayout = Math.min(...payouts);
+      const bestNums = payouts.map((p, i) => p === minPayout ? i : -1).filter(i => i !== -1);
+      return generateDetails(bestNums[Math.floor(Math.random() * bestNums.length)]);
+    }
+  } catch(e) {}
+  return generateDetails(Math.floor(Math.random()*10));
+};
+
+const settleBets = async (gameType: string, periodId: string, result: any) => {
+  if (!dbInstance) {
+    console.error('[SETTLE-FAIL] No DB instance available');
+    return;
+  }
+  try {
+    console.log(`[SETTLE] Checking bets for ${gameType} ${periodId}`);
+    const snap = await dbInstance.collection('bets')
+      .where('gameType', '==', gameType)
+      .where('periodId', '==', periodId)
+      .where('status', '==', 'pending')
+      .get();
+    
+    if (snap.empty) {
+      console.log(`[SETTLE] No pending bets found for ${gameType} ${periodId}`);
+      return;
+    }
+
+    console.log(`[SETTLE] Found ${snap.size} pending bets for ${gameType} ${periodId}`);
+    
+    const batch = dbInstance.batch();
+    const userUpdates = new Map<string, number>();
+
+    snap.docs.forEach(doc => {
+      const bet = doc.data();
+      let win = false;
+      const resNum = result.resultNumber;
+      const selection = bet.selection;
+
+      // Win Logic
+      if (
+        (selection === 'Green' && result.resultColor.includes('Green')) ||
+        (selection === 'Red' && result.resultColor.includes('Red')) ||
+        (selection === 'Violet' && result.resultColor.includes('Violet')) ||
+        (selection === 'Big' && result.resultSize === 'Big') ||
+        (selection === 'Small' && result.resultSize === 'Small') ||
+        (Number(selection) === resNum)
+      ) win = true;
+
+      let mult = 0;
+      if (win) {
+        if (selection === 'Green') mult = resNum === 5 ? 1.5 : 2;
+        else if (selection === 'Red') mult = resNum === 0 ? 1.5 : 2;
+        else if (selection === 'Violet') mult = 4.5;
+        else if (selection === 'Big' || selection === 'Small') mult = 2;
+        else if (Number(selection) === resNum) mult = 9;
+      }
+
+      const winAmount = (bet.amount || 0) * mult;
+      batch.update(doc.ref, { 
+        status: win ? 'win' : 'lost', 
+        winAmount: win ? winAmount : 0,
+        settledAt: FieldValue.serverTimestamp(),
+        resultDetails: result // Store result details in the bet for client-side popups
+      });
+
+      if (win && winAmount > 0) {
+        const currentWin = userUpdates.get(bet.uid) || 0;
+        userUpdates.set(bet.uid, currentWin + winAmount);
+      }
+    });
+
+    // Update user balances in the same batch
+    for (const [uid, amount] of userUpdates.entries()) {
+      batch.update(dbInstance.collection('users').doc(uid), {
+        balance: FieldValue.increment(amount)
+      });
+    }
+
+    await batch.commit();
+    console.log(`[SETTLE] Successfully committed settlement for ${gameType} ${periodId}`);
+  } catch(e: any) {
+    console.error(`[SETTLE-ERROR] Failure during settlement for ${gameType} ${periodId}:`, e.message);
+  }
+};
+
+const startGameScheduler = () => {
+  const processed = new Set<string>();
+  
+  // Also periodically check for "orphan" pending bets from older periods
+  setInterval(async () => {
+    if (!dbInstance) return;
+    try {
+      const now = Date.now();
+      const olderThan = new Date(now - 30000); // 30 seconds ago
+      const snap = await dbInstance.collection('bets')
+        .where('status', '==', 'pending')
+        .where('createdAt', '<', admin.firestore.Timestamp.fromDate(olderThan))
+        .limit(20)
+        .get();
+
+      if (!snap.empty) {
+        console.log(`[AUTO-SETTLE] Found ${snap.size} orphan pending bets. Attempting to match with history...`);
+        for (const doc of snap.docs) {
+          const bet = doc.data();
+          const gameKey = `${bet.gameType}_${bet.periodId}`;
+          
+          // Check cache first
+          const history = gameHistoryCache.get(bet.gameType) || [];
+          const matched = history.find(h => h.periodId === bet.periodId);
+          
+          if (matched) {
+            await settleBets(bet.gameType, bet.periodId, matched);
+          } else {
+            // Check DB
+            const gameDoc = await dbInstance.collection('games').doc(gameKey).get();
+            if (gameDoc.exists) {
+              await settleBets(bet.gameType, bet.periodId, gameDoc.data());
+            }
+          }
+        }
+      }
+    } catch (e: any) {}
+  }, 15000);
+
+  const loadInitialHistory = async () => {
+    if (!dbInstance) return;
+    try {
+      const snap = await dbInstance.collection('games').orderBy('createdAt', 'desc').limit(2000).get();
+      const allGames = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      for (const type of Object.keys(GAME_MODES)) {
+        const filtered = allGames.filter((g: any) => g.gameType === type && g.status === 'completed').slice(0, 100);
+        if (filtered.length > 0) {
+          const jsonHistory = filtered.map((g: any) => ({
+            ...g,
+            startTime: g.startTime?.toDate?.()?.toISOString() || g.startTime,
+            endTime: g.endTime?.toDate?.()?.toISOString() || g.endTime,
+            createdAt: g.createdAt?.toDate?.()?.toISOString() || g.createdAt
+          }));
+          gameHistoryCache.set(type, jsonHistory);
+        }
+      }
+    } catch (e) {}
+  };
+
+  loadInitialHistory();
+
+  setInterval(async () => {
+    if (!dbInstance) return;
+    const now = Date.now();
+    for (const [type, dur] of Object.entries(GAME_MODES)) {
+      const durMs = (dur as number) * 1000;
+      const rIdx = Math.floor(now / durMs);
+      const lastRIdx = rIdx - 1;
+      const lastDate = new Date(lastRIdx * durMs);
+      const dateStr = lastDate.toISOString().slice(0, 10).replace(/-/g, '');
+      const dayStart = new Date(lastDate);
+      dayStart.setUTCHours(0, 0, 0, 0);
+      const dayIndex = Math.floor((lastDate.getTime() - dayStart.getTime()) / durMs) + 1;
+      
+      // Prefix based on game type to ensure total separation
+      const typePrefix = type === '30s' ? '1' : type === '1m' ? '2' : type === '3m' ? '3' : '4';
+      const lastRId = `${dateStr}${typePrefix}${dayIndex.toString().padStart(4, '0')}`;
+      const key = `${type}_${lastRId}`;
+      
+      if (processed.has(key)) continue;
+
+        try {
+          const res = await generateResult(type, lastRId);
+          const startTime = new Date(lastRIdx * durMs);
+          const endTime = new Date(lastRIdx * durMs + durMs);
+          
+          console.log(`[SCHEDULER] Generated result for ${type} ${lastRId}: ${res.resultNumber}`);
+
+          // Prepare data for both DB and Cache
+          const gameData = { 
+            ...res, 
+            status: 'completed', 
+            periodId: lastRId, 
+            gameType: type,
+            startTime: startTime, 
+            endTime: endTime,
+            createdAt: new Date().toISOString() 
+          };
+
+          // 1. Update In-Memory Cache IMMEDIATELY so users see the result
+          const current = gameHistoryCache.get(type) || [];
+          gameHistoryCache.set(type, [gameData, ...current].slice(0, 100));
+          console.log(`[CACHE] Updated history for ${type}, count: ${gameHistoryCache.get(type)?.length}`);
+          processed.add(key);
+
+          // 2. Attempt Firestore Write (Non-blocking)
+          if (dbInstance) {
+            try {
+              await dbInstance.collection('games').doc(key).set({
+                ...gameData,
+                startTime: admin.firestore.Timestamp.fromDate(startTime),
+                endTime: admin.firestore.Timestamp.fromDate(endTime),
+                createdAt: admin.firestore.FieldValue.serverTimestamp()
+              }, { merge: true });
+              console.log(`[DB] Saved game result ${key}`);
+            } catch(dbErr: any) {
+              console.error(`[DB-SAVE-FAIL] Failed to persist game ${key}:`, dbErr.message);
+            }
+
+            // 3. Settle Bets 
+            try {
+              await settleBets(type, lastRId, res);
+            } catch (settleErr: any) {
+              console.error(`[SETTLE-INIT-FAIL] Failed to initiate settlement for ${key}:`, settleErr.message);
+            }
+          }
+        } catch (e: any) {
+          console.error(`[SCHEDULER-ERROR] ${type}:`, e.message);
+        }
+    }
+  }, 1000);
+};
 
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
 
-  // Start listening immediately to avoid 503 timeouts on Hostinger
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server process started on port ${PORT}`);
-  });
+  app.use(express.json());
 
-  await initFirestore();
-  isMysqlEnabled = await checkMysqlConnection();
-  
-  if (isMysqlEnabled) console.log('MySQL Mode: Enabled');
-  else console.log('Firebase Mode: Enabled');
+  // Background Init (Non-blocking but critical)
+  initFirestore().then(async () => {
+    console.log('[BOOT] Firestore Ready. Continuing initialization...');
+    await ensureSystemSettings();
+    initRazorpay();
+    isMysqlEnabled = await checkMysqlConnection();
+    startGameScheduler();
+    console.log('[BOOT] Game Scheduler Started.');
+  }).catch(e => console.error('Background init error:', e));
 
+  // 2. Immediate Health Check & API Routes
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', mode: isMysqlEnabled ? 'mysql' : 'firebase' });
+    res.json({ 
+      status: 'ok', 
+      firestore: !!dbInstance, 
+      firestoreError: lastFirestoreError,
+      mysql: isMysqlEnabled,
+      configProject: firebaseConfig?.projectId,
+      resolvedProject: admin.apps[0]?.options?.projectId || 'N/A',
+      numApps: admin.apps.length,
+      databaseId: firebaseConfig?.firestoreDatabaseId,
+      envProject: process.env.GOOGLE_CLOUD_PROJECT || 'N/A'
+    });
   });
 
-  try {
-    app.use(express.json());
+  app.get('/api/test/seed-history', async (req, res) => {
+    if (!dbInstance) return res.status(503).send('Init...');
+    const { startId = '202604220722', count = '50', type = '1m' } = req.query;
+    const startIndex = parseInt(startId as string);
+    const dateStr = (startId as string).slice(0, 8);
+    const durationCount = parseInt(count as string);
+    const durationMs = (GAME_MODES[type as keyof typeof GAME_MODES] || 60) * 1000;
 
-    const GAME_MODES = {
-      '30s': 30,
-      '1m': 60,
-      '3m': 180,
-      '5m': 300,
-      'ladder': 60
-    };
+    try {
+      for (let i = 0; i < durationCount; i++) {
+        const currentIndex = startIndex - (durationCount - 1 - i);
+        if (currentIndex < 1) continue;
+        const periodId = `${dateStr}${currentIndex.toString().padStart(4, '0')}`;
+        const key = `${type}_${periodId}`;
+        
+        const docRef = dbInstance.collection('games').doc(key);
+        const docSnap = await docRef.get();
+        if (docSnap.exists) continue;
 
-    const generateDetails = (num: number) => {
-      let color = '';
-      if ([1, 3, 7, 9].includes(num)) color = 'Green';
-      else if ([2, 4, 6, 8].includes(num)) color = 'Red';
-      else if (num === 0) color = 'Red-Violet';
-      else if (num === 5) color = 'Green-Violet';
-      const size = num <= 4 ? 'Small' : 'Big';
-      return { resultNumber: num, resultColor: color, resultSize: size };
-    };
+        const resNum = Math.floor(Math.random() * 10);
+        const color = resNum === 0 ? 'Red-Violet' : resNum === 5 ? 'Green-Violet' : [1, 3, 7, 9].includes(resNum) ? 'Green' : 'Red';
+        const size = resNum >= 5 ? 'Big' : 'Small';
+        const dayStart = new Date();
+        dayStart.setUTCHours(0, 0, 0, 0);
+        const timestamp = new Date(dayStart.getTime() + (currentIndex - 1) * durationMs);
 
-    const generateResult = async (gameType: string, periodId: string) => {
-      try {
-        // 1. Check for manual controls first
-        const controlsSnap = await dbInstance.collection('game_controls')
+        await docRef.set({
+          periodId,
+          gameType: type,
+          resultNumber: resNum,
+          resultColor: color,
+          resultSize: size,
+          status: 'completed',
+          startTime: admin.firestore.Timestamp.fromDate(timestamp),
+          endTime: admin.firestore.Timestamp.fromDate(new Date(timestamp.getTime() + durationMs)),
+          createdAt: admin.firestore.Timestamp.fromDate(timestamp),
+          isSeeded: true
+        });
+      }
+      res.json({ success: true, message: 'Seeded' });
+    } catch (e: any) {
+      res.status(500).send(e.message);
+    }
+  });
+
+  app.get('/api/test-write', async (req, res) => {
+    if (!dbInstance) return res.send('No DB instance');
+    try {
+      await dbInstance.collection('_health_').doc('test').set({ time: Date.now() });
+      res.send('Write Success');
+    } catch (e: any) {
+      res.status(500).send(`Write Failed: ${e.message}`);
+    }
+  });
+
+  app.get('/api/diagnostic', (req, res) => {
+    res.json({
+      env: process.env.NODE_ENV,
+      port: PORT,
+      hasFirestore: !!dbInstance,
+      hasRazorpay: !!razorpay,
+      hasServiceAccount: !!process.env.FIREBASE_SERVICE_ACCOUNT_JSON,
+      firebaseConfig: {
+        projectId: firebaseConfig?.projectId,
+        databaseId: firebaseConfig?.firestoreDatabaseId
+      },
+      apps: admin.apps.length
+    });
+  });
+
+  // API Endpoints with Error Handling
+  app.get('/api/current-round/:gameType', (req, res) => {
+    try {
+      const dur = (GAME_MODES as any)[req.params.gameType];
+      if (!dur) throw new Error(`Invalid game type: ${req.params.gameType}`);
+      
+      const now = Date.now(); 
+      const durMs = dur * 1000;
+      const rIdx = Math.floor(now / durMs);
+      const date = new Date(rIdx * durMs);
+      
+      if (isNaN(date.getTime())) throw new Error('Calculated invalid date');
+      
+      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+      const dayStart = new Date(date);
+      dayStart.setUTCHours(0, 0, 0, 0);
+      const dayIndex = Math.floor((date.getTime() - dayStart.getTime()) / durMs) + 1;
+      const typePrefix = req.params.gameType === '30s' ? '1' : req.params.gameType === '1m' ? '2' : req.params.gameType === '3m' ? '3' : '4';
+      const roundId = `${dateStr}${typePrefix}${dayIndex.toString().padStart(4, '0')}`;
+
+      res.json({ 
+        roundId: roundId, 
+        remainingTime: Math.max(0, Math.floor(((rIdx*durMs + durMs) - now) / 1000)),
+        serverTime: now
+      });
+    } catch (e: any) {
+      console.error(`[API] current-round error for ${req.params.gameType}:`, e.message);
+      res.status(400).json({ error: e.message });
+    }
+  });
+
+  app.get('/api/user/:uid', async (req, res) => {
+    if (!dbInstance) return res.status(503).json({ error: 'System Initializing' });
+    try {
+      const user = await dbInstance.collection('users').doc(req.params.uid).get();
+      if (!user.exists) return res.status(404).json({ error: 'User not found' });
+      res.json(user.data());
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/sync-user', async (req, res) => {
+    if (!dbInstance) return res.status(503).json({ error: 'System Initializing' });
+    const { uid, username, email } = req.body;
+    try {
+      const userRef = dbInstance.collection('users').doc(uid);
+      const snap = await userRef.get();
+      const isSuperAdmin = email === 'triloksinghrathore51@gmail.com';
+      
+      if (!snap.exists) {
+        await userRef.set({
+          uid, username, email,
+          balance: 0,
+          totalBets: 0,
+          dailyBets: 0,
+          requiredTurnover: 0,
+          role: isSuperAdmin ? 'admin' : 'user',
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      } else if (isSuperAdmin && snap.data()?.role !== 'admin') {
+        // Auto-promote super-admin if they somehow lost the role
+        await userRef.update({ role: 'admin' });
+      }
+      res.json({ success: true });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.get('/api/history/:gameType', async (req, res) => {
+    const { gameType } = req.params;
+    let results = [...(gameHistoryCache.get(gameType) || [])];
+
+    try {
+      if (dbInstance) {
+        const snapshot = await dbInstance.collection('games')
           .where('gameType', '==', gameType)
-          .where('status', '==', 'pending')
-          .limit(10) // Get more and sort in memory if needed
+          .where('status', '==', 'completed')
+          .orderBy('periodId', 'desc')
+          .limit(50)
           .get();
 
-        if (!controlsSnap.empty) {
-          // Sort in memory to avoid mandatory composite index
-          const docs = controlsSnap.docs.sort((a, b) => {
-            const aTime = a.data().createdAt?.toMillis() || 0;
-            const bTime = b.data().createdAt?.toMillis() || 0;
-            return bTime - aTime;
+        if (!snapshot.empty) {
+          const dbResults = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              ...data,
+              startTime: data.startTime && typeof data.startTime.toMillis === 'function' ? data.startTime.toMillis() : data.startTime,
+              endTime: data.endTime && typeof data.endTime.toMillis === 'function' ? data.endTime.toMillis() : data.endTime,
+              createdAt: data.createdAt && typeof data.createdAt.toMillis === 'function' ? data.createdAt.toMillis() : data.createdAt
+            };
           });
-          
-          const controlDoc = docs[0];
-          const controlData = controlDoc.data();
-          const targetNumber = controlData.targetNumber;
-          const targetSize = controlData.targetSize;
-          
-          await controlDoc.ref.update({ status: 'used', processedAt: admin.firestore.FieldValue.serverTimestamp() });
 
-          if (targetNumber !== undefined && targetNumber !== null) return generateDetails(targetNumber);
-          if (targetSize === 'Big') {
-            const nums = [5, 6, 7, 8, 9];
-            return generateDetails(nums[Math.floor(Math.random() * nums.length)]);
-          }
-          if (targetSize === 'Small') {
-            const nums = [0, 1, 2, 3, 4];
-            return generateDetails(nums[Math.floor(Math.random() * nums.length)]);
-          }
-        }
+          // Deduplicate and merge strictly by periodId and gameType
+          const merged = new Map();
+          [...results, ...dbResults].forEach((item: any) => {
+            if (item.gameType === gameType && !merged.has(item.periodId)) {
+              merged.set(item.periodId, item);
+            }
+          });
 
-        // 2. Check System Settings
-        const settingsSnap = await dbInstance.collection('system_config').doc('settings').get();
-        const settings = settingsSnap.data();
-
-        if (settings?.autoProfit) {
-          // AUTO PROFIT MODE: Analyze all bets and pick result with least payout
-          const betsSnapshot = await dbInstance.collection('bets')
-            .where('gameType', '==', gameType)
-            .where('periodId', '==', periodId)
-            .get();
-
-          const payouts = new Array(10).fill(0);
-          betsSnapshot.forEach(doc => {
-            const bet = doc.data();
-            const amount = bet.totalAmount || (bet.amount * 1) || 0;
+          results = Array.from(merged.values())
+            .sort((a: any, b: any) => b.periodId.localeCompare(a.periodId))
+            .slice(0, 100);
             
-            for (let n = 0; n <= 9; n++) {
-              const res = generateDetails(n);
-              let win = false;
-              let mult = 0;
-              if (bet.selection === 'Green' && res.resultColor.includes('Green')) { win = true; mult = n === 5 ? 1.5 : 2; }
-              else if (bet.selection === 'Red' && res.resultColor.includes('Red')) { win = true; mult = n === 0 ? 1.5 : 2; }
-              else if (bet.selection === 'Violet' && res.resultColor.includes('Violet')) { win = true; mult = 4.5; }
-              else if (bet.selection === 'Big' && res.resultSize === 'Big') { win = true; mult = 2; }
-              else if (bet.selection === 'Small' && res.resultSize === 'Small') { win = true; mult = 2; }
-              else if (Number(bet.selection) === n) { win = true; mult = 9; }
-              
-              if (win) payouts[n] += (amount * mult);
-            }
-          });
-
-          let minPayout = Infinity;
-          let bestNumber = Math.floor(Math.random() * 10);
-          payouts.forEach((p, n) => {
-            if (p < minPayout) {
-              minPayout = p;
-              bestNumber = n;
-            }
-          });
-          return generateDetails(bestNumber);
-        }
-
-        if (settings?.randomMode === false) {
-           // If random mode is OFF and no manual/auto profit, handle as fixed (e.g., always 0 or Big)
-           // But usually users want random ON.
-        }
-
-        // 3. RANDOM MODE (Default)
-        return generateDetails(Math.floor(Math.random() * 10));
-      } catch (err) {
-        console.error('Result Generation Error:', err);
-        return generateDetails(Math.floor(Math.random() * 10));
-      }
-    };
-
-    // Settlement Logic
-    const settleBets = async (gameType: string, periodId: string, result: any) => {
-      try {
-        if (isMysqlEnabled) {
-          // MySQL Settlement
-          const bets = await query('SELECT * FROM bets WHERE game_type = ? AND round_id = ? AND status = "pending"', [gameType, periodId]) as any[];
-          for (const bet of bets) {
-            let isWin = false;
-            let multiplier = 0;
-            const resNum = result.resultNumber;
-            const resColor = result.resultColor;
-            const resSize = result.resultSize;
-
-            if (bet.selection === 'Green' && resColor.includes('Green')) { isWin = true; multiplier = resNum === 5 ? 1.5 : 2; }
-            else if (bet.selection === 'Red' && resColor.includes('Red')) { isWin = true; multiplier = resNum === 0 ? 1.5 : 2; }
-            else if (bet.selection === 'Violet' && resColor.includes('Violet')) { isWin = true; multiplier = 4.5; }
-            else if (bet.selection === 'Big' && resSize === 'Big') { isWin = true; multiplier = 2; }
-            else if (bet.selection === 'Small' && resSize === 'Small') { isWin = true; multiplier = 2; }
-            else if (!isNaN(Number(bet.selection)) && Number(bet.selection) === resNum) { isWin = true; multiplier = 9; }
-
-            const winAmount = isWin ? bet.amount * multiplier : 0;
-            const status = isWin ? 'win' : 'lost';
-
-            // Update MySQL
-            if (isWin) {
-              await query('UPDATE users SET balance = balance + ? WHERE uid = ?', [winAmount, bet.uid]);
-              await query('UPDATE bets SET status = "win", win_amount = ? WHERE id = ?', [winAmount, bet.id]);
-              await query('INSERT INTO transactions (uid, type, amount, status, description) VALUES (?, "win", ?, "completed", ?)', 
-                [bet.uid, winAmount, `Win on ${bet.selection} (Period: ${periodId})`]);
-            } else {
-              await query('UPDATE bets SET status = "lost" WHERE id = ?', [bet.id]);
-            }
-
-            // Real-time Sync with Firestore
-            try {
-              const userRef = dbInstance.collection('users').doc(bet.uid);
-              if (isWin) {
-                await userRef.update({ balance: admin.firestore.FieldValue.increment(winAmount) });
-              }
-
-              // Update the corresponding Firestore bet if it exists
-              const firestoreBets = await dbInstance.collection('bets')
-                .where('uid', '==', bet.uid)
-                .where('periodId', '==', periodId)
-                .where('selection', '==', bet.selection)
-                .where('status', '==', 'pending')
-                .limit(1)
-                .get();
-
-              if (!firestoreBets.empty) {
-                await firestoreBets.docs[0].ref.update({ status, winAmount });
-              }
-            } catch (fsErr) {
-              console.error('Firestore sync error during settlement:', fsErr);
-            }
-          }
-        } else {
-          // Firebase Settlement
-          const betsSnapshot = await dbInstance.collection('bets')
-            .where('gameType', '==', gameType)
-            .where('periodId', '==', periodId)
-            .where('status', '==', 'pending')
-            .get();
-
-          for (const betDoc of betsSnapshot.docs) {
-            const bet = betDoc.data();
-            let isWin = false;
-            let multiplier = 0;
-            const resNum = result.resultNumber;
-            const resColor = result.resultColor;
-            const resSize = result.resultSize;
-
-            if (bet.selection === 'Green' && resColor.includes('Green')) { isWin = true; multiplier = resNum === 5 ? 1.5 : 2; }
-            else if (bet.selection === 'Red' && resColor.includes('Red')) { isWin = true; multiplier = resNum === 0 ? 1.5 : 2; }
-            else if (bet.selection === 'Violet' && resColor.includes('Violet')) { isWin = true; multiplier = 4.5; }
-            else if (bet.selection === 'Big' && resSize === 'Big') { isWin = true; multiplier = 2; }
-            else if (bet.selection === 'Small' && resSize === 'Small') { isWin = true; multiplier = 2; }
-            else if (!isNaN(Number(bet.selection)) && Number(bet.selection) === resNum) { isWin = true; multiplier = 9; }
-
-            if (isWin) {
-              const winAmount = bet.netAmount * multiplier;
-              await dbInstance.runTransaction(async (t) => {
-                const userRef = dbInstance.collection('users').doc(bet.uid);
-                const userSnap = await t.get(userRef);
-                if (userSnap.exists) {
-                  const userData = userSnap.data();
-                  const currentBalance = userData?.balance || 0;
-                  t.update(userRef, { balance: currentBalance + winAmount });
-                }
-                t.update(betDoc.ref, { status: 'win', winAmount });
-                t.set(dbInstance.collection('transactions').doc(), { 
-                  uid: bet.uid, 
-                  type: 'win', 
-                  amount: winAmount, 
-                  status: 'completed', 
-                  description: `Win on ${bet.selection} (Period: ${periodId})`, 
-                  createdAt: admin.firestore.FieldValue.serverTimestamp() 
-                });
-              });
-            } else {
-              await betDoc.ref.update({ status: 'lost', winAmount: 0 });
-            }
-          }
-        }
-      } catch (err) { console.error('Settlement Error:', err); }
-    };
-
-    // Round Scheduler
-    setInterval(async () => {
-      try {
-        const now = Date.now();
-        for (const [type, duration] of Object.entries(GAME_MODES)) {
-          const durationSeconds = duration as number;
-          const durationMs = durationSeconds * 1000;
-          const roundIndex = Math.floor(now / durationMs);
-          const startTime = roundIndex * durationMs;
-          const endTime = startTime + durationMs;
-          
-          const date = new Date(startTime);
-          const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-          const roundId = `${dateStr}${roundIndex}`;
-          
-          const remainingTime = Math.max(0, Math.floor((endTime - now) / 1000));
-
-          if (isMysqlEnabled) {
-            const [rows] = await query('SELECT * FROM game_rounds WHERE round_id = ? AND game_type = ?', [roundId, type]) as any;
-            if (!rows || rows.length === 0) {
-              await query('INSERT INTO game_rounds (round_id, game_type, start_time, end_time, status) VALUES (?, ?, ?, ?, "running")', 
-                [roundId, type, new Date(startTime), new Date(endTime)]);
-            } else {
-              const round = rows[0];
-              if (remainingTime <= 5 && !round.result_number && round.status === 'running') {
-                const res = await generateResult(type, roundId);
-                await query('UPDATE game_rounds SET result_number = ?, result_color = ?, result_size = ? WHERE id = ?', 
-                  [res.resultNumber, res.resultColor, res.resultSize, round.id]);
-              }
-              if (remainingTime <= 0 && round.status === 'running') {
-                await query('UPDATE game_rounds SET status = "completed" WHERE id = ?', [round.id]);
-                
-                // Sync Completed Round to Firestore for History
-                if (round.result_number !== null) {
-                  try {
-                    await dbInstance.collection('games').doc(`${type}_${roundId}`).set({
-                      periodId: roundId,
-                      gameType: type,
-                      resultNumber: round.result_number,
-                      resultColor: round.result_color,
-                      resultSize: round.result_size,
-                      status: 'completed',
-                      createdAt: admin.firestore.FieldValue.serverTimestamp()
-                    });
-                  } catch (fsErr) {
-                    console.error('Firestore game sync error:', fsErr);
-                  }
-
-                  await settleBets(type, roundId, { 
-                    resultNumber: round.result_number, 
-                    resultColor: round.result_color, 
-                    resultSize: round.result_size 
-                  });
-                }
-              }
-            }
-          } else {
-            const roundRef = dbInstance.collection('games').doc(`${type}_${roundId}`);
-            const doc = await roundRef.get();
-            if (!doc.exists) {
-              await roundRef.set({ 
-                periodId: roundId, 
-                gameType: type, 
-                startTime: admin.firestore.Timestamp.fromMillis(startTime), 
-                endTime: admin.firestore.Timestamp.fromMillis(endTime), 
-                status: 'running', 
-                createdAt: admin.firestore.FieldValue.serverTimestamp() 
-              });
-            } else {
-              const data = doc.data();
-              if (remainingTime <= 5 && !data?.resultNumber && data?.status === 'running') {
-                const res = await generateResult(type, roundId);
-                await roundRef.update({ 
-                  resultNumber: res.resultNumber,
-                  resultColor: res.resultColor,
-                  resultSize: res.resultSize
-                });
-              }
-              if (remainingTime <= 0 && data?.status === 'running') {
-                await roundRef.update({ status: 'completed' });
-                if (data?.resultNumber !== undefined) {
-                  await settleBets(type, roundId, { 
-                    resultNumber: data.resultNumber, 
-                    resultColor: data.resultColor, 
-                    resultSize: data.resultSize 
-                  });
-                }
-              }
-            }
-          }
-        }
-      } catch (err: any) { 
-        console.error('Scheduler Error Details:', {
-          message: err.message,
-          code: err.code,
-          details: err.details,
-          stack: err.stack
-        }); 
-
-        // Live Recovery: If we hit a NOT_FOUND or PERMISSION_DENIED error, it means the current dbInstance is pointing back to a database that doesn't exist or is inaccessible.
-        // We force it to default for future attempts.
-        if (err.code === 5 || err.code === 7 || err.message?.includes('NOT_FOUND') || err.message?.includes('PERMISSION_DENIED')) {
-          console.warn('[RECOVERY] NOT_FOUND or PERMISSION_DENIED error detected in scheduler. Forcing dbInstance to (default).');
-          dbInstance = getFirestore();
+          gameHistoryCache.set(gameType, results);
         }
       }
-    }, 500);
-
-    // API Endpoints
-    app.get('/api/current-round/:gameType', async (req, res) => {
-      const { gameType } = req.params;
-      const duration = (GAME_MODES as any)[gameType];
-      if (!duration) return res.status(400).json({ error: 'Invalid game type' });
-      const now = Date.now();
-      const roundIndex = Math.floor(now / (duration * 1000));
-      const startTime = roundIndex * (duration * 1000);
-      const endTime = startTime + (duration * 1000);
-      res.json({ roundId: `${new Date(startTime).toISOString().slice(0, 10).replace(/-/g, '')}${roundIndex}`, remainingTime: Math.max(0, Math.floor((endTime - now) / 1000)), serverTime: now, endTime });
-    });
-
-    // User Balance API (For MySQL)
-    app.get('/api/user/:uid', async (req, res) => {
-      if (!isMysqlEnabled) return res.status(400).json({ error: 'MySQL not enabled' });
-      const [rows] = await query('SELECT * FROM users WHERE uid = ?', [req.params.uid]) as any;
-      if (!rows || rows.length === 0) return res.status(404).json({ error: 'User not found' });
-      res.json(rows[0]);
-    });
-
-    // Place Bet API (For MySQL)
-    app.post('/api/bet', async (req, res) => {
-      if (!isMysqlEnabled) return res.status(400).json({ error: 'MySQL not enabled' });
-      const { uid, roundId, gameType, selection, amount } = req.body;
-      try {
-        const [userRows] = await query('SELECT balance FROM users WHERE uid = ?', [uid]) as any;
-        if (!userRows || userRows[0].balance < amount) return res.status(400).json({ error: 'Insufficient balance' });
-        
-        // Update MySQL
-        await query('UPDATE users SET balance = balance - ? WHERE uid = ?', [amount, uid]);
-        const [betResult] = await query('INSERT INTO bets (uid, round_id, game_type, selection, amount, status) VALUES (?, ?, ?, ?, ?, "pending")', [uid, roundId, gameType, selection, amount]) as any;
-        await query('INSERT INTO transactions (uid, type, amount, status, description) VALUES (?, "bet", ?, "completed", ?)', [uid, amount, `Bet on ${selection}`]);
-
-        // Sync with Firestore for real-time updates
-        const userRef = dbInstance.collection('users').doc(uid);
-        const userDoc = await userRef.get();
-        const currentTurnover = userDoc.data()?.requiredTurnover || 0;
-
-        await userRef.update({
-          balance: admin.firestore.FieldValue.increment(-amount),
-          totalBets: admin.firestore.FieldValue.increment(amount),
-          dailyBets: admin.firestore.FieldValue.increment(amount),
-          requiredTurnover: Math.max(0, currentTurnover - amount)
-        });
-
-        // Add bet to Firestore for real-time history
-        await dbInstance.collection('bets').add({
-          uid,
-          periodId: roundId,
-          gameType,
-          selection,
-          amount,
-          status: 'pending',
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          mysqlId: betResult.insertId // Link back if needed
-        });
-
-        res.json({ success: true });
-      } catch (err) { 
-        console.error('Betting failed:', err);
-        res.status(500).json({ error: 'Betting failed' }); 
-      }
-    });
-
-    // Sync User API (For MySQL)
-    app.post('/api/sync-user', async (req, res) => {
-      if (!isMysqlEnabled) return res.status(400).json({ error: 'MySQL not enabled' });
-      const { uid, username, email } = req.body;
-      try {
-        const [rows] = await query('SELECT * FROM users WHERE uid = ?', [uid]) as any;
-        if (!rows || rows.length === 0) {
-          await query('INSERT INTO users (uid, username, email, balance) VALUES (?, ?, ?, 0)', [uid, username, email]);
-          return res.json({ success: true, message: 'User created' });
-        }
-        res.json({ success: true, message: 'User exists' });
-      } catch (err) { res.status(500).json({ error: 'Sync failed' }); }
-    });
-
-    if (process.env.NODE_ENV !== 'production') {
-      const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
-      app.use(vite.middlewares);
-    } else {
-      // Resilient dist path: check if we are already inside dist or if it's a sibling
-      const distPath = fs.existsSync(path.join(__dirname, 'index.html'))
-        ? __dirname
-        : path.join(process.cwd(), 'dist');
-      
-      console.log(`[PRODUCTION] Serving static files from: ${distPath}`);
-      app.use(express.static(distPath));
-      app.get('*', (req, res) => {
-        const indexPath = path.join(distPath, 'index.html');
-        if (fs.existsSync(indexPath)) {
-          res.sendFile(indexPath);
-        } else {
-          res.status(404).send('Frontend build not found. Please run npm run build.');
-        }
-      });
+    } catch (e: any) {
+      console.warn(`[API-HISTORY-WARN] DB fetch failed for ${gameType}:`, e.message);
     }
-  } catch (error) { console.error('Server Init Error:', error); }
+    res.json(results);
+  });
+
+  app.post('/api/bet', async (req, res) => {
+    if (!dbInstance) return res.status(503).send('System Initializing...');
+    const { uid, amount: reqAmount, selection, gameType, roundId } = req.body;
+    
+    try {
+      const amount = Number(reqAmount);
+      if (!uid || isNaN(amount) || amount <= 0 || !selection || !gameType || !roundId) {
+        throw new Error('Invalid or missing bet parameters');
+      }
+
+      const userRef = dbInstance.collection('users').doc(uid);
+      await dbInstance.runTransaction(async (t) => {
+        const snap = await t.get(userRef);
+        if (!snap.exists) throw new Error('User not found');
+        
+        const data = snap.data();
+        const balance = data?.balance || 0;
+        const currentTurnover = data?.requiredTurnover || 0;
+        
+        if (balance < amount) throw new Error('Insufficient Balance');
+        
+        const fee = amount * 0.04;
+        const netAmount = amount - fee;
+        
+        // Update user
+        t.update(userRef, { 
+          balance: FieldValue.increment(-amount),
+          totalBets: FieldValue.increment(amount),
+          dailyBets: FieldValue.increment(amount),
+          requiredTurnover: Math.max(0, currentTurnover - amount),
+          updatedAt: FieldValue.serverTimestamp()
+        });
+        
+        // Save bet with ALL fields expected by rules (for consistency)
+        const betDoc = dbInstance.collection('bets').doc();
+        t.set(betDoc, { 
+          uid, 
+          amount: amount, 
+          periodId: roundId, 
+          gameType, 
+          selection, 
+          multiplier: 1, 
+          totalAmount: amount,
+          fee,
+          netAmount,
+          status: 'pending', 
+          createdAt: FieldValue.serverTimestamp() 
+        });
+
+        // Add transaction record
+        const transDoc = dbInstance.collection('transactions').doc();
+        t.set(transDoc, {
+          uid,
+          type: 'bet',
+          amount: amount,
+          description: `Bet on ${selection} (${gameType})`,
+          status: 'completed',
+          createdAt: FieldValue.serverTimestamp()
+        });
+      });
+      
+      console.log(`[BET] User ${uid} placed bet of ${amount} on ${selection} in ${gameType} ${roundId}`);
+      res.json({ success: true });
+    } catch(e: any) { 
+      console.error(`[BET-ERROR] User ${uid} bet failed:`, e.message);
+      res.status(400).send(e.message); 
+    }
+  });
+
+  // Razorpay Endpoints
+  app.post('/api/payment/razorpay/create', async (req, res) => {
+    if (!razorpay) return res.status(503).json({ error: 'Razorpay Loading' });
+    try {
+      const order = await razorpay.orders.create({ amount: Math.round(req.body.amount * 100), currency: 'INR', receipt: `r_${Date.now()}` });
+      res.json({ ...order, keyId: process.env.RAZORPAY_KEY_ID });
+    } catch(e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  app.post('/api/payment/razorpay/verify', async (req, res) => {
+    if (!razorpay || !dbInstance) return res.status(503).json({ error: 'System Initializing' });
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, uid, amount } = req.body;
+    
+    try {
+      const crypto = await import('crypto');
+      const body = razorpay_order_id + "|" + razorpay_payment_id;
+      const expectedSignature = crypto
+        .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
+        .update(body.toString())
+        .digest('hex');
+
+      if (expectedSignature === razorpay_signature) {
+        const userRef = dbInstance.collection('users').doc(uid);
+        await dbInstance.runTransaction(async (t) => {
+          t.update(userRef, { 
+            balance: admin.firestore.FieldValue.increment(amount),
+            totalDeposits: admin.firestore.FieldValue.increment(amount),
+            dailyDeposits: admin.firestore.FieldValue.increment(amount)
+          });
+          const transRef = dbInstance.collection('transactions').doc();
+          t.set(transRef, {
+            uid,
+            type: 'deposit',
+            amount,
+            status: 'completed',
+            paymentId: razorpay_payment_id,
+            orderId: razorpay_order_id,
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
+          });
+        });
+        res.json({ success: true });
+      } else {
+        res.status(400).json({ success: false, error: 'Invalid signature' });
+      }
+    } catch (e: any) {
+      console.error('[RAZORPAY] Verify error:', e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // 3. Setup Frontend (Vite or Static)
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: 'spa' });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), fs.existsSync(path.join(process.cwd(), 'dist')) ? 'dist' : '.');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+  }
+
+  // Global Error Handler
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error('[EXPRESS] Global Error:', err);
+    res.status(500).json({ error: 'Internal Server Error', details: err.message });
+  });
+
+  // 4. Finally, LISTEN
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[BOOT] Server is now listening on port ${PORT}`);
+  });
 }
 
 startServer().catch(console.error);

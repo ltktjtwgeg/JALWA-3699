@@ -62,37 +62,48 @@ export default function Admin() {
     }
   }, [user, navigate]);
 
-  useEffect(() => {
-    const unsubUsers = onSnapshot(query(collection(db, 'users'), where('isDemo', '!=', true), limit(50)), (snap) => {
-      setUsers(snap.docs.map(d => d.data() as User));
-    });
-    const unsubDemoUsers = onSnapshot(query(collection(db, 'users'), where('isDemo', '==', true), limit(50)), (snap) => {
-      setDemoUsers(snap.docs.map(d => d.data() as User));
-    });
-    const unsubGames = onSnapshot(query(collection(db, 'games'), orderBy('periodId', 'desc'), limit(20)), (snap) => {
-      setGames(snap.docs.map(d => ({ id: d.id, ...d.data() } as Game)));
-    });
-    const unsubWithdrawals = onSnapshot(query(collection(db, 'transactions'), where('type', '==', 'withdraw'), where('status', '==', 'pending')), (snap) => {
-      setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction)));
-    });
-    const unsubControls = onSnapshot(query(collection(db, 'game_controls'), where('status', '==', 'pending')), (snap) => {
-      setPendingControls(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    const unsubFees = onSnapshot(query(collection(db, 'platform_fees'), orderBy('createdAt', 'desc'), limit(50)), (snap) => {
-      const fees = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-      setPlatformFees(fees);
-      const total = fees.reduce((acc, curr) => acc + (curr.amount || 0), 0);
-      setTotalFees(total);
-    });
+  const [isLoading, setIsLoading] = useState(false);
 
-    return () => {
-      unsubUsers();
-      unsubGames();
-      unsubWithdrawals();
-      unsubControls();
-      unsubFees();
-    };
-  }, []);
+  const fetchData = async (tab: typeof activeTab) => {
+    if (!user) return;
+    setIsLoading(true);
+    try {
+      if (tab === 'users') {
+        const snap = await getDocs(query(collection(db, 'users'), where('isDemo', '!=', true), limit(10)));
+        setUsers(snap.docs.map(d => d.data() as User));
+      } else if (tab === 'demo') {
+        const snap = await getDocs(query(collection(db, 'users'), where('isDemo', '==', true), limit(10)));
+        setDemoUsers(snap.docs.map(d => d.data() as User));
+      } else if (tab === 'games') {
+        const snap = await getDocs(query(collection(db, 'games'), orderBy('periodId', 'desc'), limit(15)));
+        setGames(snap.docs.map(d => ({ id: d.id, ...d.data() } as Game)));
+      } else if (tab === 'withdrawals') {
+        const snap = await getDocs(query(collection(db, 'transactions'), where('type', '==', 'withdraw'), where('status', '==', 'pending'), limit(20)));
+        setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction)));
+      } else if (tab === 'control') {
+        const snap = await getDocs(query(collection(db, 'game_controls'), where('status', '==', 'pending'), limit(15)));
+        setPendingControls(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } else if (tab === 'fees') {
+        const snap = await getDocs(query(collection(db, 'platform_fees'), orderBy('createdAt', 'desc'), limit(30)));
+        const fees = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+        setPlatformFees(fees);
+        const total = fees.reduce((acc, curr) => acc + (curr.amount || 0), 0);
+        setTotalFees(total);
+      }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData(activeTab);
+    
+    // Low frequency refresh to keep data semi-live without blowing quota
+    const interval = setInterval(() => fetchData(activeTab), 60000); // 1 minute
+    return () => clearInterval(interval);
+  }, [activeTab]);
 
   const handleApproveWithdrawal = async (t: Transaction) => {
     try {
@@ -204,6 +215,7 @@ export default function Admin() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-bold">{u.username}</p>
+                    <p className="text-[10px] text-purple-400 font-mono font-bold">UID: {u.inviteCode}</p>
                     <p className="text-[10px] text-gray-500">{u.email || u.phoneNumber}</p>
                   </div>
                   <div className="text-right">

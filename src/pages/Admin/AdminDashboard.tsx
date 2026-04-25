@@ -26,7 +26,13 @@ import {
   Search,
   Plus,
   History,
-  Trash2
+  Trash2,
+  Bomb,
+  Gem,
+  Square,
+  Circle,
+  Zap,
+  Eye
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -48,7 +54,7 @@ import {
 import { formatCurrency, cn } from '../../lib/utils';
 import { toast } from 'sonner';
 import { db } from '../../firebase';
-import { collection, query, getDocs, limit, where } from 'firebase/firestore';
+import { collection, query, getDocs, limit, where, onSnapshot, orderBy, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { GameType } from '../../types';
 
 export default function AdminDashboard() {
@@ -57,12 +63,77 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [expandedMenus, setExpandedMenus] = useState<string[]>(['Dashboard']);
+  const [pendingControls, setPendingControls] = useState<Record<string, any>>({});
 
   const navigate = useNavigate();
 
   useEffect(() => {
-    fetchData();
+    // Real-time listener for pending controls
+    const q = query(
+      collection(db, 'game_controls'),
+      where('status', '==', 'pending'),
+      where('type', '==', 'wingo')
+    );
+    
+    // Use serverTimestamps: 'estimate' for immediate local feedback on selection
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const mapping: Record<string, any> = {};
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+      
+      // Sort in memory - handle null createdAt by putting them at the top (newest)
+      docs.sort((a, b) => {
+        const timeA = a.createdAt?.toMillis() || Date.now();
+        const timeB = b.createdAt?.toMillis() || Date.now();
+        return timeB - timeA;
+      });
+      
+      docs.forEach(data => {
+        if (!mapping[data.gameType]) {
+          mapping[data.gameType] = data;
+        }
+      });
+      setPendingControls(mapping);
+    });
+
+    return () => unsubscribe();
   }, []);
+
+  const handleManualControl = async (type: GameType, value: string) => {
+    try {
+      const current = pendingControls[type];
+      
+      let targetSize: string | undefined = undefined;
+      let targetNum: number | undefined = undefined;
+      
+      if (value === 'Big' || value === 'Small') {
+        targetSize = value;
+      } else if (!isNaN(parseInt(value))) {
+        targetNum = parseInt(value);
+      }
+      
+      // Determine if we are clearing or setting
+      const isAlreadySelected = value === 'Auto' || 
+         (targetSize && current?.targetSize === targetSize && current?.targetNumber === undefined) ||
+         (targetNum !== undefined && current?.targetNumber === targetNum);
+
+      // Optimistic update for UI responsiveness
+      const nextControls = { ...pendingControls };
+      if (isAlreadySelected) {
+        delete nextControls[type];
+        setPendingControls(nextControls);
+        await setGameControl(type, undefined, undefined);
+        toast.info(`Reset ${type} to System Default`);
+      } else {
+        nextControls[type] = { targetSize, targetNumber: targetNum, status: 'pending' };
+        setPendingControls(nextControls);
+        await setGameControl(type, targetSize, targetNum);
+        toast.success(`Forced ${value} for ${type}`);
+      }
+    } catch (e) {
+       // Refresh or handle error
+       toast.error('Failed to update control');
+    }
+  };
 
   const [currentView, setCurrentView] = useState('dashboard');
   const [adjustingBalance, setAdjustingBalance] = useState<{uid: string, amount: string} | null>(null);
@@ -100,6 +171,21 @@ export default function AdminDashboard() {
     setExpandedMenus(prev => 
       prev.includes(menu) ? prev.filter(m => m !== menu) : [...prev, menu]
     );
+  };
+
+  const handleFlushMines = async () => {
+    try {
+      const q = query(collection(db, 'mines_sessions'), where('status', '==', 'playing'));
+      const snap = await getDocs(q);
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => {
+        batch.set(d.ref, { status: 'flushed', updatedAt: serverTimestamp() }, { merge: true });
+      });
+      await batch.commit();
+      toast.success('Active sessions flushed');
+    } catch (e) {
+      toast.error('Flush failed');
+    }
   };
 
   if (loading) {
@@ -278,7 +364,9 @@ export default function AdminDashboard() {
                  view={currentView} 
                  settings={settings} 
                  updateSetting={handleUpdateSetting}
-                 onBack={() => setCurrentView('dashboard')} 
+                 onBack={() => setCurrentView('dashboard')}
+                 pendingControls={pendingControls}
+                 handleManualControl={handleManualControl}
               />
             ) : (
               <div className="flex flex-col items-center justify-center py-20 bg-white rounded-3xl shadow-xl">
@@ -293,7 +381,7 @@ export default function AdminDashboard() {
   );
 }
 
-function AdminSubView({ view, settings, updateSetting, onBack }: any) {
+function AdminSubView({ view, settings, updateSetting, onBack, pendingControls, handleManualControl }: any) {
   const [users, setUsers] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState('');
@@ -301,8 +389,38 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
   const [giftCodes, setGiftCodes] = React.useState<any[]>([]);
   const [newGift, setNewGift] = React.useState({ code: '', amount: 10, maxUses: 100 });
   const [pendingTrans, setPendingTrans] = React.useState<any[]>([]);
+  const [txnFilter, setTxnFilter] = React.useState<'pending' | 'history'>('pending');
+  const [processingId, setProcessingId] = React.useState<string | null>(null);
   const [minesConfig, setMinesConfig] = React.useState({ targetUser: 'global', mines: '' });
   const [rouletteConfig, setRouletteConfig] = React.useState({ targetUser: 'global', number: 0 });
+  const [minesSessions, setMinesSessions] = React.useState<any[]>([]);
+
+  React.useEffect(() => {
+    const q = query(
+      collection(db, 'mines_sessions'),
+      orderBy('updatedAt', 'desc'),
+      limit(20)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setMinesSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsub();
+  }, []);
+
+  const handleFlushMines = async () => {
+    try {
+      const q = query(collection(db, 'mines_sessions'), where('status', '==', 'playing'));
+      const snap = await getDocs(q);
+      const batch = writeBatch(db);
+      snap.docs.forEach(d => {
+        batch.set(d.ref, { status: 'flushed', updatedAt: serverTimestamp() }, { merge: true });
+      });
+      await batch.commit();
+      toast.success('Active sessions flushed');
+    } catch (e) {
+      toast.error('Flush failed');
+    }
+  };
 
   const handleCreateGift = async () => {
     if (!newGift.code) return toast.error('Enter code');
@@ -331,17 +449,6 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
     }
   };
 
-  const handleManualControl = async (type: GameType, value: string) => {
-    try {
-      if (value === 'Force Big Only') await setGameControl(type, 'Big');
-      else if (value === 'Force Small Only') await setGameControl(type, 'Small');
-      else if (!isNaN(parseInt(value))) await setGameControl(type, undefined, parseInt(value));
-      toast.success(`Manual control scheduled for ${type}`);
-    } catch (e) {
-      toast.error('Failed to schedule control');
-    }
-  };
-
   const fetchTransactions = async (type: 'deposit' | 'withdraw') => {
     setLoading(true);
     try {
@@ -355,12 +462,14 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
   };
 
   const handleTransAction = async (id: string, status: 'completed' | 'rejected', uid: string) => {
+    setProcessingId(id);
     try {
       await updateTransactionStatus(id, status, uid);
       toast.success(`Transaction ${status}`);
-      fetchTransactions(view.includes('Deposit') ? 'deposit' : 'withdraw');
     } catch (e) {
       toast.error('Failed to update transaction');
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -391,11 +500,46 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
     if (view === 'Gift Code') {
       fetchGiftCodes();
     }
-    if (view === 'Deposit Update') {
-      fetchTransactions('deposit');
-    }
-    if (view === 'Withdraw Apply') {
-      fetchTransactions('withdraw');
+    if (view === 'Deposit Update' || view === 'Withdraw Apply') {
+      const type = view === 'Deposit Update' ? 'deposit' : 'withdraw';
+      let q;
+      if (txnFilter === 'pending') {
+        q = query(
+          collection(db, 'transactions'),
+          where('type', '==', type),
+          where('status', '==', 'pending'),
+          orderBy('createdAt', 'desc')
+        );
+      } else {
+        q = query(
+          collection(db, 'transactions'),
+          where('type', '==', type),
+          where('status', '!=', 'pending'),
+          orderBy('status'), // Needed for inequality filter
+          limit(50)
+        );
+        // Note: Firestore inequality filter requires ordering by that field first if using orderBy on other fields
+        // Actually, simplest is just fetch status != pending and order by status.
+        // But users want to see most recent.
+        // Let's use a simpler approach: fetch all type == 'deposit' limited to 100 and filter client side.
+        q = query(
+          collection(db, 'transactions'),
+          where('type', '==', type),
+          orderBy('createdAt', 'desc'),
+          limit(100)
+        );
+      }
+      
+      const unsub = onSnapshot(q, (snap) => {
+        let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (txnFilter === 'pending') {
+          docs = docs.filter((d: any) => d.status === 'pending');
+        } else {
+          docs = docs.filter((d: any) => d.status !== 'pending');
+        }
+        setPendingTrans(docs);
+      });
+      return () => unsub();
     }
     if (view === 'Game Settings') {
       const fetchPool = async () => {
@@ -417,16 +561,8 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
   }, [view]);
 
   const fetchUsers = async () => {
-    setLoading(true);
-    try {
-      const q = query(collection(db, 'users'), limit(50));
-      const snap = await getDocs(q);
-      setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    } catch (e) {
-      toast.error('Failed to load users');
-    } finally {
-      setLoading(false);
-    }
+    const data = await getUsers(searchTerm);
+    setUsers(data);
   };
 
   return (
@@ -586,43 +722,93 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
               ))}
             </div>
           </div>
-        )}
-
-        {view === 'Deposit Update' && (
+        )}        {view === 'Deposit Update' && (
           <div className="space-y-6">
-            <h3 className="text-sm font-black text-emerald-500 uppercase tracking-widest">Pending Deposit Requests</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-emerald-500 uppercase tracking-widest">Deposit Requests</h3>
+              <div className="flex bg-white p-1 rounded-xl shadow-sm border border-gray-100">
+                <button 
+                  onClick={() => setTxnFilter('pending')}
+                  className={cn(
+                    "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                    txnFilter === 'pending' ? "bg-[#7c3aed] text-white" : "text-gray-400 hover:text-gray-600"
+                  )}
+                >
+                  Pending
+                </button>
+                <button 
+                  onClick={() => setTxnFilter('history')}
+                  className={cn(
+                    "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                    txnFilter === 'history' ? "bg-[#7c3aed] text-white" : "text-gray-400 hover:text-gray-600"
+                  )}
+                >
+                  History
+                </button>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 gap-4">
               {pendingTrans.map((tx) => (
-                <div key={tx.id} className="bg-gray-50 p-6 rounded-[32px] border border-gray-100 flex items-center justify-between">
+                <div key={tx.id} className="bg-gray-50 p-6 rounded-[32px] border border-gray-100 flex items-center justify-between relative overflow-hidden">
+                  {tx.status !== 'pending' && (
+                    <div className={cn(
+                      "absolute top-0 right-0 px-6 py-1 text-[8px] font-black uppercase tracking-[0.2em] transform rotate-45 translate-x-6 translate-y-2 shadow-sm text-white",
+                      tx.status === 'completed' ? "bg-emerald-500" : "bg-rose-500"
+                    )}>
+                      {tx.status}
+                    </div>
+                  )}
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm">
-                      <ArrowDownCircle className="w-6 h-6 text-emerald-500" />
+                      <ArrowDownCircle className={cn("w-6 h-6", tx.status === 'completed' ? "text-emerald-500" : tx.status === 'rejected' ? "text-rose-500" : "text-emerald-500")} />
                     </div>
                     <div>
                       <p className="text-xs font-black text-gray-800">₹{tx.amount}</p>
                       <p className="text-[10px] text-gray-400 font-bold">UID: {tx.uid}</p>
                       <p className="text-[10px] text-gray-400">Time: {tx.createdAt?.toDate().toLocaleString()}</p>
+                      {tx.transactionId && <p className="text-[10px] text-purple-600 font-black mt-1">TXN: {tx.transactionId}</p>}
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <button 
-                      onClick={() => handleTransAction(tx.id, 'rejected', tx.uid)}
-                      className="bg-rose-500/10 text-rose-500 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all"
-                    >
-                      Reject
-                    </button>
-                    <button 
-                      onClick={() => handleTransAction(tx.id, 'completed', tx.uid)}
-                      className="bg-emerald-500 text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-emerald-500/20 hover:translate-y-[-2px] transition-all"
-                    >
-                      Approve
-                    </button>
+                  <div className="flex items-center gap-6">
+                    {tx.proofUrl && (
+                      <a 
+                        href={tx.proofUrl} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="group relative w-16 h-16 rounded-xl overflow-hidden border-2 border-purple-100 hover:border-purple-500 transition-all"
+                      >
+                        <img src={tx.proofUrl} alt="Proof" className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                          <Eye className="w-4 h-4 text-white" />
+                        </div>
+                      </a>
+                    )}
+                    
+                    {tx.status === 'pending' && (
+                      <div className="flex items-center gap-3">
+                        <button 
+                          onClick={() => handleTransAction(tx.id, 'rejected', tx.uid)}
+                          disabled={processingId === tx.id}
+                          className="bg-rose-500/10 text-rose-500 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all disabled:opacity-50"
+                        >
+                          {processingId === tx.id ? '...' : 'Reject'}
+                        </button>
+                        <button 
+                          onClick={() => handleTransAction(tx.id, 'completed', tx.uid)}
+                          disabled={processingId === tx.id}
+                          className="bg-emerald-500 text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-emerald-500/20 hover:translate-y-[-2px] transition-all disabled:opacity-50"
+                        >
+                          {processingId === tx.id ? 'Processing...' : 'Approve'}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
               {pendingTrans.length === 0 && (
                 <div className="py-20 text-center bg-gray-50 rounded-[32px] border-2 border-dashed border-gray-100">
-                  <p className="text-xs font-black text-gray-300 uppercase italic tracking-widest">No pending deposits</p>
+                  <p className="text-xs font-black text-gray-300 uppercase italic tracking-widest">No {txnFilter} deposits</p>
                 </div>
               )}
             </div>
@@ -631,39 +817,75 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
 
         {view === 'Withdraw Apply' && (
           <div className="space-y-6">
-            <h3 className="text-sm font-black text-orange-500 uppercase tracking-widest">Pending Withdrawal Requests</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-black text-orange-500 uppercase tracking-widest">Withdrawal Requests</h3>
+              <div className="flex bg-white p-1 rounded-xl shadow-sm border border-gray-100">
+                <button 
+                  onClick={() => setTxnFilter('pending')}
+                  className={cn(
+                    "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                    txnFilter === 'pending' ? "bg-orange-500 text-white" : "text-gray-400 hover:text-gray-600"
+                  )}
+                >
+                  Pending
+                </button>
+                <button 
+                  onClick={() => setTxnFilter('history')}
+                  className={cn(
+                    "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                    txnFilter === 'history' ? "bg-orange-500 text-white" : "text-gray-400 hover:text-gray-600"
+                  )}
+                >
+                  History
+                </button>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 gap-4">
               {pendingTrans.map((tx) => (
-                <div key={tx.id} className="bg-gray-50 p-6 rounded-[32px] border border-gray-100 flex items-center justify-between">
+                <div key={tx.id} className="bg-gray-50 p-6 rounded-[32px] border border-gray-100 flex items-center justify-between relative overflow-hidden">
+                  {tx.status !== 'pending' && (
+                    <div className={cn(
+                      "absolute top-0 right-0 px-6 py-1 text-[8px] font-black uppercase tracking-[0.2em] transform rotate-45 translate-x-6 translate-y-2 shadow-sm text-white",
+                      tx.status === 'completed' ? "bg-emerald-500" : "bg-rose-500"
+                    )}>
+                      {tx.status}
+                    </div>
+                  )}
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm">
-                      <ArrowUpCircle className="w-6 h-6 text-orange-500" />
+                      <ArrowUpCircle className={cn("w-6 h-6", tx.status === 'completed' ? "text-emerald-500" : tx.status === 'rejected' ? "text-rose-500" : "text-orange-500")} />
                     </div>
                     <div>
                       <p className="text-xs font-black text-gray-800">₹{tx.amount}</p>
                       <p className="text-[10px] text-gray-400 font-bold">UID: {tx.uid}</p>
                       <p className="text-[10px] text-gray-400">Method: {tx.description}</p>
+                      <p className="text-[10px] text-gray-400 italic">Time: {tx.createdAt?.toDate().toLocaleString()}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <button 
-                      onClick={() => handleTransAction(tx.id, 'rejected', tx.uid)}
-                      className="bg-rose-500/10 text-rose-500 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all"
-                    >
-                      Reject
-                    </button>
-                    <button 
-                      onClick={() => handleTransAction(tx.id, 'completed', tx.uid)}
-                      className="bg-[#7c3aed] text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-purple-500/20 hover:translate-y-[-2px] transition-all"
-                    >
-                      Set Success
-                    </button>
-                  </div>
+                  {tx.status === 'pending' && (
+                    <div className="flex items-center gap-3">
+                      <button 
+                        onClick={() => handleTransAction(tx.id, 'rejected', tx.uid)}
+                        disabled={processingId === tx.id}
+                        className="bg-rose-500/10 text-rose-500 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all disabled:opacity-50"
+                      >
+                        {processingId === tx.id ? '...' : 'Reject'}
+                      </button>
+                      <button 
+                        onClick={() => handleTransAction(tx.id, 'completed', tx.uid)}
+                        disabled={processingId === tx.id}
+                        className="bg-[#7c3aed] text-white px-8 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-purple-500/20 hover:translate-y-[-2px] transition-all disabled:opacity-50"
+                      >
+                        {processingId === tx.id ? 'Processing...' : 'Set Success'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
               {pendingTrans.length === 0 && (
                 <div className="py-20 text-center bg-gray-50 rounded-[32px] border-2 border-dashed border-gray-100">
-                  <p className="text-xs font-black text-gray-300 uppercase italic tracking-widest">No pending withdrawals</p>
+                  <p className="text-xs font-black text-gray-300 uppercase italic tracking-widest">No {txnFilter} withdrawals</p>
                 </div>
               )}
             </div>
@@ -671,46 +893,261 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
         )}
 
         {view === 'Mines Control' && (
-          <div className="space-y-8">
-            <div className="bg-gray-50 p-8 rounded-[40px] border border-gray-100">
-              <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-6">Mines Outcome Control</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* Global Mines Status */}
+            <div className="relative overflow-hidden bg-[#1a1c2e] p-8 rounded-[40px] border border-white/5 shadow-2xl">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/10 blur-[100px] rounded-full -mr-32 -mt-32" />
+              <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Target User (Username or 'global')</label>
-                  <input 
-                    type="text" 
-                    value={minesConfig.targetUser}
-                    onChange={e => setMinesConfig({...minesConfig, targetUser: e.target.value})}
-                    placeholder="Username"
-                    className="w-full p-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold"
-                  />
+                   <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-purple-500/20 flex items-center justify-center">
+                         <Zap className="w-4 h-4 text-purple-400" />
+                      </div>
+                      <h3 className="text-xs font-black text-gray-400 uppercase tracking-[0.2em]">Global Mines Status</h3>
+                   </div>
+                   <p className="text-[10px] text-gray-500 font-bold uppercase italic max-w-sm ml-11">
+                      Rigged mode increases the probability of hitting a mine in early clicks to secure site profit.
+                   </p>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-gray-400 uppercase ml-2">Target Mines Positions (0-24, comma separated)</label>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. 0,1,2"
-                    value={minesConfig.mines}
-                    onChange={e => setMinesConfig({...minesConfig, mines: e.target.value})}
-                    className="w-full p-4 bg-white border border-gray-200 rounded-2xl outline-none focus:ring-2 focus:ring-[#7c3aed] font-bold font-mono"
-                  />
+                <div className="flex items-center gap-6">
+                   <div className="text-right">
+                      <p className="text-[10px] font-black text-gray-500 uppercase mb-1">Current State</p>
+                      <div className="flex items-center gap-2">
+                         <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                         <span className="text-xl font-black text-white uppercase italic">Active</span>
+                      </div>
+                   </div>
                 </div>
               </div>
+              
               <button 
-                onClick={handleMinesControl}
-                className="mt-6 w-full bg-black text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl hover:translate-y-[-2px] transition-all"
+                onClick={handleFlushMines}
+                className="mt-8 w-full bg-rose-500/10 hover:bg-rose-500 text-rose-500 hover:text-white border border-rose-500/20 py-4 rounded-2xl font-black uppercase text-[10px] tracking-[0.3em] transition-all"
               >
-                Schedule Forced Mine Setup
+                Force Flush Active Sessions
               </button>
             </div>
-            <div className="p-6 bg-blue-50 rounded-3xl border border-blue-100">
-               <p className="text-xs text-blue-800 font-bold leading-relaxed">
-                  Tip: If you want a user to LOSE, place a bomb on any of the early tiles they are likely to click.
-               </p>
+
+            {/* Mode Selection Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+               {[
+                 { mode: 'random', label: 'Random Mode', desc: 'Fair play. AI determines outcomes naturally.', icon: Globe, color: 'bg-[#7c3aed]' },
+                 { mode: 'force_win', label: 'Force Win', desc: 'Players always hit Diamonds. High payout risk.', icon: Trophy, color: 'bg-emerald-500' },
+                 { mode: 'force_loss', label: 'Force Loss', desc: 'Players always hit Mines. Maximum profit mode.', icon: ShieldCheck, color: 'bg-rose-500' }
+               ].map((item) => {
+                 const isActive = (settings?.minesMode || 'random') === item.mode;
+                 return (
+                   <button 
+                     key={item.mode}
+                     onClick={() => updateSetting('minesMode', item.mode)}
+                     className={cn(
+                       "relative group p-6 rounded-[32px] border transition-all duration-300 text-left overflow-hidden",
+                       isActive 
+                        ? "bg-[#1f2228] border-purple-500/50 shadow-2xl shadow-purple-500/10" 
+                        : "bg-white border-gray-100 hover:border-gray-200"
+                     )}
+                   >
+                      {isActive && (
+                        <div className="absolute top-4 right-4 bg-purple-500 text-white px-3 py-1 rounded-full text-[8px] font-black uppercase tracking-widest animate-in zoom-in duration-300">
+                           Active
+                        </div>
+                      )}
+                      
+                      <div className={cn(
+                        "w-12 h-12 rounded-2xl flex items-center justify-center mb-4 transition-all duration-300",
+                        isActive ? item.color : "bg-gray-50 text-gray-400 group-hover:scale-110"
+                      )}>
+                         <item.icon className={cn("w-6 h-6", isActive ? "text-white" : "text-gray-400")} />
+                      </div>
+                      
+                      <h4 className={cn(
+                        "text-sm font-black uppercase tracking-tight italic mb-1",
+                        isActive ? "text-white" : "text-gray-800"
+                      )}>
+                        {item.label}
+                      </h4>
+                      <p className={cn(
+                        "text-[10px] leading-relaxed font-bold uppercase",
+                        isActive ? "text-gray-400" : "text-gray-400"
+                      )}>
+                        {item.desc}
+                      </p>
+                   </button>
+                 );
+               })}
+            </div>
+
+            {/* Live Sessions Table */}
+            <div className="bg-white rounded-[40px] border border-gray-100 overflow-hidden shadow-sm">
+               <div className="p-8 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                  <div className="flex items-center gap-3">
+                     <TrendingUp className="w-5 h-5 text-purple-500" />
+                     <h3 className="text-xs font-black text-gray-800 uppercase tracking-widest italic">Live Mines Sessions</h3>
+                  </div>
+                  <div className="flex items-center gap-2">
+                     <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                     <span className="text-[10px] font-black text-gray-400 uppercase">{minesSessions.filter(s => s.status === 'playing').length} Players Playing</span>
+                  </div>
+               </div>
+               
+               <div className="overflow-x-auto">
+                  <table className="w-full">
+                     <thead>
+                        <tr className="border-b border-gray-50">
+                           <th className="px-8 py-4 text-left text-[10px] font-black text-gray-400 uppercase tracking-widest">Player</th>
+                           <th className="px-8 py-4 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest">Bet (₹)</th>
+                           <th className="px-8 py-4 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest">Mines</th>
+                           <th className="px-8 py-4 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest">Stage</th>
+                           <th className="px-8 py-4 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest">Profit (₹)</th>
+                           <th className="px-8 py-4 text-right text-[10px] font-black text-gray-400 uppercase tracking-widest">Map View</th>
+                        </tr>
+                     </thead>
+                     <tbody className="divide-y divide-gray-50">
+                        {minesSessions.map((session) => (
+                           <tr key={session.id} className="group hover:bg-gray-50/50 transition-colors">
+                              <td className="px-8 py-5">
+                                 <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center text-[#7c3aed] font-black italic">
+                                       {session.username?.[0]?.toUpperCase()}
+                                    </div>
+                                    <div>
+                                       <p className="text-xs font-black text-gray-800 uppercase tracking-tight">{session.username}</p>
+                                       <p className="text-[8px] text-gray-400 font-bold font-mono">ID: {session.id.slice(-6)}</p>
+                                    </div>
+                                 </div>
+                              </td>
+                              <td className="px-8 py-5 text-center font-black text-gray-800 text-xs">
+                                 ₹{session.betAmount}
+                              </td>
+                              <td className="px-8 py-5 text-center">
+                                 <span className="bg-rose-50 text-rose-500 px-3 py-1 rounded-lg text-[10px] font-black italic">
+                                    {session.mineCount} Boms
+                                 </span>
+                              </td>
+                              <td className="px-8 py-5 text-center">
+                                 <span className="bg-emerald-50 text-emerald-600 px-3 py-1 rounded-lg text-[10px] font-black italic">
+                                    STEP {session.revealedCount}
+                                 </span>
+                              </td>
+                              <td className="px-8 py-5 text-center font-black text-emerald-500 text-xs italic">
+                                 +₹{session.winAmount || 0}
+                              </td>
+                              <td className="px-8 py-5">
+                                 <div className="flex justify-end">
+                                    <div className="grid grid-cols-5 gap-0.5 p-1 bg-gray-100 rounded-lg">
+                                       {Array.from({ length: 25 }).map((_, idx) => {
+                                          const isRevealed = session.revealedIndices?.includes(idx);
+                                          return (
+                                             <div key={idx} className={cn(
+                                                "w-2.5 h-2.5 rounded-sm",
+                                                isRevealed ? (session.status === 'lost' ? "bg-rose-500" : "bg-emerald-500") : "bg-white"
+                                             )} />
+                                          );
+                                       })}
+                                    </div>
+                                 </div>
+                              </td>
+                           </tr>
+                        ))}
+                        {minesSessions.length === 0 && (
+                           <tr>
+                              <td colSpan={6} className="py-20 text-center">
+                                 <div className="flex flex-col items-center justify-center opacity-20">
+                                    <Bomb className="w-12 h-12 mb-4" />
+                                    <p className="text-xs font-black uppercase tracking-widest italic">No active sessions</p>
+                                 </div>
+                              </td>
+                           </tr>
+                        )}
+                     </tbody>
+                  </table>
+               </div>
+            </div>
+
+            {/* Manual Target Grid */}
+            <div className="bg-gray-50 p-8 rounded-[40px] border border-gray-100">
+               <div className="flex items-center justify-between mb-8">
+                  <div className="space-y-1">
+                     <h3 className="text-xs font-black text-gray-800 uppercase tracking-widest italic">Precision Mine Placement</h3>
+                     <p className="text-[10px] text-gray-400 font-bold uppercase">Manually override the next game bomb positions</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                     <input 
+                       type="text" 
+                       value={minesConfig.targetUser}
+                       onChange={e => setMinesConfig({...minesConfig, targetUser: e.target.value})}
+                       placeholder="Target User (username or 'global')"
+                       className="bg-white border border-gray-200 rounded-xl px-4 py-2 text-xs font-bold outline-none focus:ring-2 focus:ring-[#7c3aed] w-48 shadow-sm"
+                     />
+                     <button 
+                       onClick={async () => {
+                         try {
+                           const minePositions = minesConfig.mines.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+                           if (minePositions.length === 0) return toast.error('Select at least one mine on the grid');
+                           await setMinesControl(minesConfig.targetUser, minePositions);
+                           toast.success('Mines control scheduled');
+                           setMinesConfig({ targetUser: 'global', mines: '' });
+                         } catch (e) {
+                           toast.error('Failed to schedule Mines control');
+                         }
+                       }}
+                       className="bg-[#7c3aed] text-white px-6 py-2 rounded-xl font-black uppercase text-[10px] tracking-widest shadow-lg shadow-purple-500/20 hover:translate-y-[-2px] transition-all"
+                     >
+                       Set Bombs
+                     </button>
+                  </div>
+               </div>
+
+               <div className="flex flex-col lg:flex-row gap-8 items-start">
+                  <div className="grid grid-cols-5 gap-2 bg-white p-4 rounded-[32px] border border-gray-200 shadow-sm max-w-sm w-full mx-auto md:mx-0">
+                     {Array.from({ length: 25 }).map((_, idx) => {
+                        const selectedMines = minesConfig.mines.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n));
+                        const isSelected = selectedMines.includes(idx);
+                        return (
+                           <button
+                             key={idx}
+                             onClick={() => {
+                                const newMines = isSelected 
+                                   ? selectedMines.filter(m => m !== idx)
+                                   : [...selectedMines, idx];
+                                setMinesConfig({ ...minesConfig, mines: newMines.join(',') });
+                             }}
+                             className={cn(
+                                "aspect-square rounded-xl flex items-center justify-center transition-all duration-300 border-2",
+                                isSelected 
+                                  ? "bg-rose-500 border-rose-600 shadow-lg shadow-rose-200 scale-105" 
+                                  : "bg-gray-50 border-gray-100 hover:border-gray-200"
+                             )}
+                           >
+                              {isSelected ? (
+                                <Bomb className="w-5 h-5 text-white" />
+                              ) : (
+                                <div className="w-1.5 h-1.5 bg-gray-200 rounded-full" />
+                              )}
+                           </button>
+                        );
+                     })}
+                  </div>
+
+                  <div className="flex-1 space-y-4">
+                     <div className="p-6 bg-purple-50 rounded-3xl border border-purple-100">
+                        <h4 className="text-xs font-black text-purple-900 uppercase mb-2">How it works</h4>
+                        <ul className="text-[10px] text-purple-800 space-y-2 font-bold list-disc pl-4 uppercase leading-relaxed">
+                           <li>Click on the grid to direct exactly where bombs will appear.</li>
+                           <li>Selected tiles (Red) will be forced to contain BOMBS.</li>
+                           <li>Target 'global' to affect the very next session by ANY user.</li>
+                           <li>Target a username to bait a specific player session.</li>
+                        </ul>
+                     </div>
+                     <div className="bg-white p-4 rounded-2xl border border-gray-100">
+                        <p className="text-[10px] text-gray-500 font-black uppercase mb-1 tracking-widest">Active Selections</p>
+                        <code className="text-[10px] font-mono font-black text-purple-500">{minesConfig.mines || 'Grid is empty'}</code>
+                     </div>
+                  </div>
+               </div>
             </div>
           </div>
         )}
-
         {view === 'Roulette Control' && (
           <div className="space-y-8">
             <div className="bg-gray-50 p-8 rounded-[40px] border border-gray-100">
@@ -939,12 +1376,16 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
                       <div className="mt-auto pt-4 border-t border-gray-200 flex flex-col gap-3">
                          <p className="text-[10px] text-gray-400 uppercase font-black">Admin Manual Control</p>
                          <select 
+                            value={pendingControls[type]?.targetSize || "Auto"}
                             onChange={(e) => handleManualControl(type as GameType, e.target.value)}
-                            className="bg-white border-2 border-gray-100 text-xs p-3 rounded-xl font-bold w-full outline-none focus:border-[#7c3aed] transition-all"
+                            className={cn(
+                              "bg-white border-2 text-xs p-3 rounded-xl font-bold w-full outline-none transition-all",
+                              pendingControls[type]?.targetSize ? "border-[#7c3aed] text-[#7c3aed]" : "border-gray-100"
+                            )}
                          >
                             <option value="Auto">System Default (Auto)</option>
-                            <option value="Force Big Only">Force Big Only</option>
-                            <option value="Force Small Only">Force Small Only</option>
+                            <option value="Big">Force Big Only</option>
+                            <option value="Small">Force Small Only</option>
                          </select>
                       </div>
 
@@ -955,7 +1396,12 @@ function AdminSubView({ view, settings, updateSetting, onBack }: any) {
                                <button 
                                   key={n}
                                   onClick={() => handleManualControl(type as GameType, n.toString())}
-                                  className="h-10 text-xs font-black bg-white border border-gray-200 rounded-xl hover:bg-[#7c3aed] hover:text-white transition-all shadow-sm hover:scale-105 active:scale-95"
+                                  className={cn(
+                                    "h-10 text-xs font-black rounded-xl transition-all shadow-sm hover:scale-105 active:scale-95 border",
+                                    pendingControls[type]?.targetNumber === n 
+                                      ? "bg-[#7c3aed] text-white border-[#7c3aed] scale-105" 
+                                      : "bg-white text-gray-700 border-gray-200 hover:border-[#7c3aed]"
+                                  )}
                                >
                                   {n}
                                </button>

@@ -34,14 +34,10 @@ export default function Home() {
   }, [banners.length]);
 
   const gameModes = [
-    { id: '1m', name: 'Wingo 1M', time: '1 Min', color: 'bg-rose-600', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo1m/200/200', category: 'lottery' },
-    { id: '30s', name: 'Wingo 30s', time: '30 Sec', color: 'bg-rose-500', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo30/200/200', category: 'lottery' },
-    { id: '1m_lottery', id_real: '1m', name: 'Wingo 1M', time: '1 Min', color: 'bg-rose-600', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo1m/200/200', category: 'lottery' },
-    { id: '3m', name: 'Wingo 3M', time: '3 Min', color: 'bg-rose-700', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo3m/200/200', category: 'lottery' },
-    { id: '5m', name: 'Wingo 5M', time: '5 Min', color: 'bg-rose-800', image: '/images/icons/time.png', fallback: 'https://picsum.photos/seed/wingo5m/200/200', category: 'lottery' },
-    { id: 'mines', name: 'Mines', type: 'mines', color: 'bg-indigo-600', image: 'https://cdn-icons-png.flaticon.com/512/3593/3593441.png', fallback: 'https://picsum.photos/seed/mines/200/200', category: 'mini' },
+    { id: 'mines', name: 'Mines', type: 'mines', color: 'bg-indigo-600', image: 'https://cdn-icons-png.flaticon.com/512/3593/3593441.png', fallback: 'https://picsum.photos/seed/mines/200/200', category: 'popular' },
     { id: 'wingo', name: 'WinGo', color: 'bg-orange-600', image: 'https://cdn-icons-png.flaticon.com/512/2858/2858908.png', fallback: 'https://picsum.photos/seed/bingo/200/200', category: 'popular' },
     { id: 'roulette', name: 'Roulette', color: 'bg-emerald-600', image: 'https://cdn-icons-png.flaticon.com/512/10512/10512739.png', fallback: 'https://picsum.photos/seed/roulette/200/200', category: 'popular' },
+    { id: 'mines_mini', id_real: 'mines', name: 'Mines', type: 'mines', color: 'bg-indigo-600', image: 'https://cdn-icons-png.flaticon.com/512/3593/3593441.png', fallback: 'https://picsum.photos/seed/mines/200/200', category: 'mini' },
   ];
 
   interface Category {
@@ -59,9 +55,6 @@ export default function Home() {
 
   const lotteryGames = [
     { id: '1m', name: 'Win Go', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/wingo/200/200', fallback: 'https://picsum.photos/seed/wingo/200/200' },
-    { id: 'ladder', name: 'Ladder', color: 'from-[#3b82f6] to-[#1d4ed8]', image: 'https://cdn-icons-png.flaticon.com/512/10512/10512704.png', fallback: 'https://picsum.photos/seed/ladder/200/200' },
-    { id: 'wingo', name: 'WinGo', color: 'from-[#f97316] to-[#ec4899]', image: 'https://cdn-icons-png.flaticon.com/512/2858/2858908.png', fallback: 'https://picsum.photos/seed/bingo/200/200' },
-    { id: 'roulette', name: 'Roulette', color: 'from-[#10b981] to-[#059669]', image: 'https://cdn-icons-png.flaticon.com/512/10512/10512739.png', fallback: 'https://picsum.photos/seed/roulette/200/200' },
     { id: 'k3', name: 'K3', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/k3/200/200', fallback: 'https://picsum.photos/seed/k3/200/200', isUpcoming: true },
     { id: '5d', name: '5D', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/5d/200/200', fallback: 'https://picsum.photos/seed/5d/200/200', isUpcoming: true },
     { id: 'trx', name: 'Trx Wingo', color: 'from-[#b349ff] to-[#4d39ff]', image: 'https://picsum.photos/seed/trx/200/200', fallback: 'https://picsum.photos/seed/trx/200/200', isUpcoming: true },
@@ -110,7 +103,9 @@ export default function Home() {
 
   const handleGameClick = (game: any) => {
     if (game.isUpcoming) return; // Prevent clicking upcoming games
-    if (game.id === 'mines') {
+    
+    // Check if it's a mines game by ID or type
+    if (game.id === 'mines' || game.id === 'mines_mini' || game.type === 'mines') {
        navigate('/mines');
     } else if (game.id === 'roulette') {
        navigate('/roulette');
@@ -145,7 +140,15 @@ export default function Home() {
         />
 
         <div className="flex items-center gap-3">
-          <Download className="w-5 h-5 text-gray-400" />
+          <a 
+            href="https://t.me/JALWA369official/21" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center justify-center p-1 hover:bg-white/10 rounded-full transition-colors"
+            title="Download App"
+          >
+            <Download className="w-5 h-5 text-gray-400" />
+          </a>
         </div>
       </div>
 

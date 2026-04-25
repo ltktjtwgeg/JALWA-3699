@@ -1,12 +1,21 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 // Respect the environment variable for database ID if present (common in AI Studio)
-const dbId = (import.meta as any).env?.VITE_FIREBASE_DATABASE_ID || firebaseConfig.firestoreDatabaseId;
-export const db = getFirestore(app, dbId);
+const configDbId = firebaseConfig.firestoreDatabaseId;
+const dbId = (import.meta as any).env?.VITE_FIREBASE_DATABASE_ID || (configDbId === '(default)' ? undefined : configDbId);
+
+// Use initializeFirestore to force long-polling for better stability in iframe environments
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+  // If specific database ID is provided, it goes here as well implicitly via the app 
+  // but for multiple databases we might need specific setup. 
+  // However, default initializeFirestore uses the default db unless specified.
+}, dbId as any);
+
 export const auth = getAuth(app);
 
 export enum OperationType {

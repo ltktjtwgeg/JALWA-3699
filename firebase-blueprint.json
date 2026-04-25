@@ -171,6 +171,10 @@
     "/feedback/{feedbackId}": {
       "schema": "Feedback",
       "description": "User feedback"
+    },
+    "/system_config/settings": {
+       "schema": "object",
+       "description": "Global system settings"
     }
   }
 }

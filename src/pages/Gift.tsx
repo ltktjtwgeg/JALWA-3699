@@ -14,6 +14,7 @@ import {
   doc, 
   runTransaction, 
   serverTimestamp,
+  increment,
   getDocs,
   limit
 } from 'firebase/firestore';
@@ -93,7 +94,8 @@ export default function GiftPage() {
         
         const currentBalance = userDoc.data().balance || 0;
         transaction.update(userRef, {
-          balance: currentBalance + giftData.amount
+          balance: currentBalance + giftData.amount,
+          requiredTurnover: increment(giftData.amount)
         });
 
         // 5. Update gift code usage
@@ -109,6 +111,17 @@ export default function GiftPage() {
           code: code.trim(),
           amount: giftData.amount,
           timestamp: serverTimestamp()
+        });
+
+        // 7. Add to main transactions
+        const transRef = doc(collection(db, 'transactions'));
+        transaction.set(transRef, {
+          uid: user.uid,
+          type: 'bonus',
+          amount: giftData.amount,
+          status: 'completed',
+          description: `Collect Bonus (Code: ${code.trim()})`,
+          createdAt: serverTimestamp()
         });
       });
 

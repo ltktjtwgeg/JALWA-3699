@@ -88,15 +88,16 @@ export default function InvitationBonus() {
     try {
       await updateDoc(doc(db, 'users', user.uid), {
         balance: increment(tier.amount),
+        requiredTurnover: increment(tier.amount),
         claimedInvitationBonuses: arrayUnion(tier.id)
       });
 
       await addDoc(collection(db, 'transactions'), {
         uid: user.uid,
-        type: 'win',
+        type: 'bonus',
         amount: tier.amount,
         status: 'completed',
-        description: `Claimed ${tier.name}`,
+        description: `Refer Bonus: ${tier.name}`,
         createdAt: serverTimestamp()
       });
 

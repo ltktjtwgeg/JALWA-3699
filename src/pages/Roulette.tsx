@@ -109,22 +109,28 @@ export default function Roulette() {
     setResultNumber(null);
 
     try {
-      // Check for Admin Control
+      // Check for Admin Control - Restricted to this user or global
       let targetNumber = WHEEL_NUMBERS[Math.floor(Math.random() * WHEEL_NUMBERS.length)];
       
       const controlQuery = query(
         collection(db, 'game_controls'),
         where('status', '==', 'pending'),
         where('type', '==', 'roulette'),
-        orderBy('createdAt', 'asc'),
-        limit(5)
+        where('targetUsername', 'in', [user.username, 'global']),
+        limit(10)
       );
       
       const controlSnap = await getDocs(controlQuery);
       let controlId = null;
 
-      // Find first matching control (global or specific to this user)
-      const matchingControl = controlSnap.docs.find(d => {
+      // Sort and find first matching control (global or specific to this user)
+      const sortedDocs = controlSnap.docs.sort((a, b) => {
+        const aTime = a.data().createdAt?.toMillis() || 0;
+        const bTime = b.data().createdAt?.toMillis() || 0;
+        return aTime - bTime;
+      });
+
+      const matchingControl = sortedDocs.find(d => {
         const data = d.data();
         return data.targetUsername === 'global' || data.targetUsername === user.username;
       });

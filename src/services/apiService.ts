@@ -9,7 +9,12 @@ export async function syncUser(uid: string, username: string, email: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uid, username, email })
     });
-    return await response.json();
+    if (!response.ok) {
+      const text = await response.text();
+      console.warn('Sync user failed:', text);
+      return null;
+    }
+    return await response.json().catch(() => ({ success: true }));
   } catch (error) {
     console.error('Error syncing user:', error);
     return null;
@@ -20,9 +25,9 @@ export async function getMySQLUser(uid: string) {
   try {
     const response = await fetch(`${API_BASE}/user/${uid}`);
     if (!response.ok) return null;
-    return await response.json();
+    return await response.json().catch(() => null);
   } catch (error) {
-    console.error('Error fetching MySQL user:', error);
+    console.error('Error fetching user:', error);
     return null;
   }
 }
@@ -40,9 +45,13 @@ export async function placeMySQLBet(betData: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(betData)
     });
-    return await response.json();
+    if (!response.ok) {
+      const text = await response.text();
+      return { error: text || 'Bet failed' };
+    }
+    return await response.json().catch(() => ({ success: true }));
   } catch (error) {
-    console.error('Error placing MySQL bet:', error);
+    console.error('Error placing bet:', error);
     return { error: 'Connection failed' };
   }
 }
@@ -50,7 +59,8 @@ export async function placeMySQLBet(betData: {
 export async function getCurrentRound(gameType: string) {
   try {
     const response = await fetch(`${API_BASE}/current-round/${gameType}`);
-    return await response.json();
+    if (!response.ok) return null;
+    return await response.json().catch(() => null);
   } catch (error) {
     console.error('Error fetching current round:', error);
     return null;

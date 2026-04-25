@@ -126,13 +126,29 @@ export default function Withdraw() {
               </div>
               <p className="text-[10px] text-white/70 font-bold uppercase tracking-widest">Available balance</p>
             </div>
-            <div className="flex items-center gap-3 mb-8">
+            <div className="flex items-center gap-3 mb-4">
               <h1 className="text-3xl font-black text-white drop-shadow-lg">₹{user?.balance.toFixed(2)}</h1>
               <RefreshCw 
                 onClick={handleRefresh}
                 className={cn("w-5 h-5 text-white/70 cursor-pointer transition-transform duration-1000", isRefreshing && "rotate-180")} 
               />
             </div>
+            
+            {user?.requiredTurnover !== undefined && user.requiredTurnover > 0 && (
+              <div className="bg-black/20 p-3 rounded-xl border border-white/10 mb-4 animate-pulse">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-bold text-white/60 uppercase">Required Turnover</span>
+                  <span className="text-xs font-black text-rose-400 font-mono">₹{user.requiredTurnover.toFixed(2)}</span>
+                </div>
+                <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-rose-500 transition-all duration-1000" 
+                    style={{ width: `${Math.min(100, (1 - (user.requiredTurnover / (user.totalDeposits || 1))) * 100)}%` }} 
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-end">
               <span className="text-xs text-white/60 font-mono tracking-[0.3em]">**** ****</span>
             </div>
@@ -287,14 +303,18 @@ export default function Withdraw() {
 
         {/* Withdrawal Instructions */}
         <div className="bg-[#1f2228] p-6 rounded-2xl border border-gray-800 space-y-4">
+          <div className="flex items-center gap-2 mb-2 text-indigo-400">
+            <Info className="w-4 h-4" />
+            <span className="text-xs font-black uppercase tracking-widest">Withdrawal Rules</span>
+          </div>
           <ul className="space-y-4">
             {[
-              { label: 'Need to bet', value: `₹${(user?.requiredTurnover || 0).toFixed(2)}`, sub: 'to be able to withdraw' },
+              { label: 'Betting Requirement', value: `1x Turnover`, sub: 'applied to all deposits & bonuses' },
+              { label: 'Pending turnover', value: `₹${(user?.requiredTurnover || 0).toFixed(2)}`, sub: 'more needed to unlock withdrawal' },
               { label: 'Withdraw time', value: '00:10-23:50' },
-              { label: 'Inday Remaining Withdrawal Times', value: '3' },
               { label: 'Withdrawal amount range', value: '₹110.00-₹1,000,000.00' },
-              { text: 'After withdraw, you need to confirm the blockchain main network 3 times before it arrives at your account.' },
-              { text: 'Please confirm that the operating environment is safe to avoid information being tampered with or leaked.' }
+              { text: 'All bonuses (Deposit, Refer, Gift) must be played at least once (1x turnover) before they can be withdrawn.' },
+              { text: 'The turnover requirement decreases as you place bets in any game (WinGo, Mines, Roulette).' }
             ].map((item, i) => (
               <li key={i} className="flex items-start gap-3 text-[10px] text-gray-500 leading-relaxed">
                 <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full mt-1.5 shrink-0 rotate-45" />

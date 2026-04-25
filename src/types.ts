@@ -74,7 +74,7 @@ export interface Bet {
 export interface Transaction {
   id?: string;
   uid: string;
-  type: 'deposit' | 'withdraw' | 'bet' | 'win';
+  type: 'deposit' | 'withdraw' | 'bet' | 'win' | 'bonus';
   amount: number;
   status: 'pending' | 'completed' | 'failed';
   description?: string;

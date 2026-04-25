@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../App';
 import { formatCurrency, cn } from '../lib/utils';
@@ -110,7 +110,7 @@ export default function GamePage() {
   const ITEMS_PER_PAGE = 10;
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [agreed, setAgreed] = useState(true);
-  const hasPlayedCountdown = useRef(false);
+  const lastTickPlayed = useRef(-1);
   const countdownAudioRef = useRef<HTMLAudioElement | null>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const [linePoints, setLinePoints] = useState<string>("");
@@ -165,7 +165,6 @@ export default function GamePage() {
     { id: '1m', label: 'WinGo 1 Min' },
     { id: '3m', label: 'WinGo 3 Min' },
     { id: '5m', label: 'WinGo 5 Min' },
-    { id: 'ladder', label: 'Ladder 1m' },
   ];
 
   const multipliers = ['Random', 1, 5, 10, 20, 50, 100];
@@ -181,6 +180,10 @@ export default function GamePage() {
 
   const playSound = (url: string) => {
     if (isMuted) return;
+    
+    // Only play countdown sound in 30s mode as requested ("30 sec open game to uska sound aana chahiye sirf")
+    if (url === SOUNDS.TICK && type !== '30s') return;
+
     if (url === SOUNDS.TICK && countdownAudioRef.current) {
       countdownAudioRef.current.currentTime = 0;
       countdownAudioRef.current.play().catch(err => console.warn('Countdown play failed:', err));
@@ -207,6 +210,14 @@ export default function GamePage() {
     const syncWithServer = async () => {
       try {
         const response = await fetch(`/api/current-round/${type}`);
+        
+        // Handle non-JSON responses (like proxy loading pages)
+        const contentType = response.headers.get('content-type');
+        if (!contentType || !contentType.includes('application/json')) {
+          console.warn('[SYNC] Received non-JSON response from server');
+          return;
+        }
+
         const data = await response.json();
         if (data.roundId) {
           setPeriodId(data.roundId);
@@ -229,58 +240,148 @@ export default function GamePage() {
     return () => clearInterval(interval);
   }, [type]);
 
-  // Timer Logic (Synced with Server Offset)
+  const fetchHistory = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/history/${type}?t=${Date.now()}`);
+      
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) return;
+
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data) && data.length > 0) {
+          setHistory(prev => {
+            if (!prev.length) return data;
+            // Only update if we get new data or if we had nothing
+            if (data[0].periodId > prev[0].periodId || (data[0].periodId === prev[0].periodId && data[0].id !== prev[0].id)) {
+              return data;
+            }
+            return prev;
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching game history fallback:', error);
+    }
+  }, [type]);
+
+  // Update Timer Logic
   useEffect(() => {
     const updateTimer = () => {
-      const now = Date.now() + serverTimeOffset;
-      const durationMs = duration * 1000;
+      const now = Date.now() + (serverTimeOffset || 0);
+      const safeDuration = duration || 60;
+      const durationMs = safeDuration * 1000;
+      
       const roundIndex = Math.floor(now / durationMs);
       const roundEnd = (roundIndex + 1) * durationMs;
-      
       const remaining = Math.max(0, Math.floor((roundEnd - now) / 1000));
       setTimeLeft(remaining);
 
-      // Period ID logic
-      const date = new Date(roundIndex * durationMs);
-      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-      const newPeriodId = `${dateStr}${roundIndex}`;
-      
-      if (newPeriodId !== currentPeriodRef.current) {
-        setPeriodId(newPeriodId);
-        currentPeriodRef.current = newPeriodId;
-        hasPlayedCountdown.current = false;
+      // Unified Period ID logic
+      try {
+        const date = new Date(roundIndex * durationMs);
+        const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+        const dayStart = new Date(date);
+        dayStart.setUTCHours(0, 0, 0, 0);
+        const dayIndex = Math.floor((date.getTime() - dayStart.getTime()) / durationMs) + 1;
+        const typePrefix = type === '30s' ? '1' : type === '1m' ? '2' : type === '3m' ? '3' : '4';
+        const newPeriodId = `${dateStr}${typePrefix}${dayIndex.toString().padStart(4, '0')}`;
+        
+        if (newPeriodId !== currentPeriodRef.current) {
+          setPeriodId(newPeriodId);
+          currentPeriodRef.current = newPeriodId;
+          lastTickPlayed.current = -1;
+          // Refresh balance and history immediately on transition
+          refreshUser();
+          fetchHistory();
+        }
+      } catch (e) {
+        console.warn('Period calculation error:', e);
       }
 
-      // Play sound when displayTime hits 5
-      if (remaining <= 5 && remaining > 0 && !hasPlayedCountdown.current && !isMuted) {
+      // Play sound when displayTime hits 5, 4, 3, 2, 1 (only for 30s mode as requested)
+      if (type === '30s' && remaining <= 5 && remaining > 0 && lastTickPlayed.current !== remaining && !isMuted) {
         playSound(SOUNDS.TICK);
-        hasPlayedCountdown.current = true;
+        lastTickPlayed.current = remaining;
+      }
+
+      // Near end: fetch history more aggressively
+      if (remaining === 0 || remaining === duration - 2) {
+        fetchHistory();
       }
     };
 
-    const interval = setInterval(updateTimer, 100);
+    const interval = setInterval(updateTimer, 500); 
     return () => clearInterval(interval);
-  }, [duration, isMuted, serverTimeOffset]);
+  }, [duration, isMuted, serverTimeOffset, refreshUser, fetchHistory]);
 
-  // Fetch History
+  // Fetch History (Real-time with fallback sorting)
   useEffect(() => {
+    if (!type) return;
+    
+    // Fetch initial history
+    setGamePage(1);
+    fetchHistory();
+    
     const q = query(
       collection(db, 'games'),
-      where('gameType', '==', type),
-      where('status', '==', 'completed'),
-      orderBy('periodId', 'desc'),
-      limit(500)
+      orderBy('createdAt', 'desc'),
+      limit(1000)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const games = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Game));
-      setHistory(games);
+      if (snapshot.empty) {
+        fetchHistory();
+        return;
+      }
+
+      const allGamesData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as Game)
+      }));
+      
+      const filtered = allGamesData
+        .filter(g => g.status === 'completed' && g.gameType === type)
+        .slice(0, 100);
+        
+      if (filtered.length > 0) {
+        setHistory(prev => {
+          if (!prev.length) return filtered;
+          // Prefer snapshot if it has newer or same data, but allow API to fill gaps
+          if (filtered[0].periodId >= prev[0].periodId) return filtered;
+          return prev;
+        });
+      } else {
+        fetchHistory();
+      }
     }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'games');
+      console.error('Error fetching real-time game history:', error);
+      fetchHistory();
     });
 
-    return () => unsubscribe();
-  }, [type]);
+    const fallbackInterval = setInterval(fetchHistory, 5000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(fallbackInterval);
+    };
+  }, [type, fetchHistory]);
+
+  // Force refresh history when periodId changes (new round starts)
+  useEffect(() => {
+    if (periodId) {
+      // Set several retries to ensure we catch the settlement
+      const intervals = [1500, 3000, 5000, 8000, 12000];
+      const timers = intervals.map(delay => 
+        setTimeout(() => {
+          fetchHistory();
+          refreshUser();
+        }, delay)
+      );
+
+      return () => timers.forEach(t => clearTimeout(t));
+    }
+  }, [periodId, fetchHistory, refreshUser]);
 
   // Fetch My Bets
   useEffect(() => {
@@ -291,7 +392,7 @@ export default function GamePage() {
       where('uid', '==', user.uid),
       where('gameType', '==', type),
       orderBy('createdAt', 'desc'),
-      limit(500)
+      limit(50) 
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -335,17 +436,17 @@ export default function GamePage() {
       b.id && 
       b.status !== 'pending' && 
       !shownBetIds.current.has(b.id) &&
-      (b.settledAt || b.createdAt).toMillis() > mountTime.current - 60000 // Allow up to 1 min before mount just in case of slight clock drift
+      (b.settledAt || b.createdAt).toMillis() > mountTime.current - 60000 
     );
     
     if (latestSettledBet) {
-      const gameResult = history.find(g => g.periodId === latestSettledBet.periodId);
+      // Prefer resultDetails from the bet itself if provided by server
+      let gameResult = latestSettledBet.resultDetails || history.find(g => g.periodId === latestSettledBet.periodId);
+      
       if (gameResult) {
         shownBetIds.current.add(latestSettledBet.id!);
         setResultData({ bet: latestSettledBet, game: gameResult });
         setShowResultModal(true);
-        
-        // Refresh balance when modal shows to ensure it's up to date
         refreshUser();
         
         if (latestSettledBet.status === 'win') {
@@ -363,6 +464,7 @@ export default function GamePage() {
     const total = betAmount * multiplier;
     if (user.balance < total) return toast.error('Insufficient balance');
     if (timeLeft < 5) return toast.error('Betting closed for this round');
+    if (!periodId) return toast.error('Synchronizing game... Please wait');
 
     setIsBetting(true);
     try {
@@ -381,6 +483,13 @@ export default function GamePage() {
         playSound(SOUNDS.BET);
         refreshUser();
         return;
+      }
+
+      if (mysqlResult && mysqlResult.error) {
+        console.warn('API bet failed, retrying with Firebase:', mysqlResult.error);
+        if (mysqlResult.error.includes('Insufficient balance')) {
+          throw new Error('Insufficient balance');
+        }
       }
 
       // Fallback to Firebase (Existing logic)
@@ -431,6 +540,7 @@ export default function GamePage() {
       setShowBetModal(false);
       toast.success('Bet placed successfully!');
       playSound(SOUNDS.BET);
+      refreshUser();
     } catch (error: any) {
       console.error('Betting error:', error);
       toast.error(error.message || 'Failed to place bet');
@@ -756,11 +866,18 @@ export default function GamePage() {
               <div className="space-y-2">
                 <p className="text-[11px] font-black tracking-tight text-black/60">WinGo {type === '30s' ? '30sec' : type}</p>
                 <div className="flex gap-1.5 h-6">
-                  {history.slice(0, 5).reverse().map((game, i) => (
-                    <div key={i} className="relative">
-                      <GameBall number={game.resultNumber || 0} size="sm" />
-                    </div>
-                  ))}
+                  {history.length > 0 ? (
+                    history.slice(0, 5).reverse().map((game, i) => (
+                      <div key={game.id || i} className="relative">
+                        <GameBall number={game.resultNumber ?? 0} size="sm" />
+                      </div>
+                    ))
+                  ) : (
+                    // Skeleton balls while loading
+                    [1, 2, 3, 4, 5].map((i) => (
+                      <div key={i} className="w-5 h-5 rounded-full bg-black/10 animate-pulse" />
+                    ))
+                  )}
                 </div>
               </div>
             </div>
@@ -768,32 +885,37 @@ export default function GamePage() {
             {/* Right Side */}
             <div className="flex h-full flex-col items-end justify-between py-1 text-right">
               <div>
-                <p className="mb-2 text-[13px] font-black uppercase tracking-wider text-black/60 pb-0 pt-0 ml-0 mt-[5px]">Time remaining</p>
-                <div className="flex items-center gap-1">
-                  <div className="flex gap-0.5">
-                    <div className="flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black text-white shadow-inner font-mono leading-none">
-                      {Math.max(0, Math.floor(timeLeft / 60 / 10))}
+                <p className="mb-2 text-[13px] font-black uppercase tracking-wider text-black/60 pb-0 pt-0 ml-[4px] -mt-[13px] pl-0 pr-[5px]">Time remaining</p>
+                  <div className="flex items-center gap-1">
+                    <div className="flex gap-0.5">
+                      <div className="flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black text-white shadow-inner font-mono leading-none">
+                        {Math.max(0, Math.floor((timeLeft || 0) / 60 / 10))}
+                      </div>
+                      <div className="flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black text-white shadow-inner font-mono leading-none">
+                        {Math.max(0, Math.floor((timeLeft || 0) / 60) % 10)}
+                      </div>
                     </div>
-                    <div className="flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black text-white shadow-inner font-mono leading-none">
-                      {Math.max(0, Math.floor(timeLeft / 60) % 10)}
+                    <div className="text-xl font-black text-[#1a1d21] leading-none">:</div>
+                    <div className="flex gap-0.5">
+                      <div className="flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black text-white shadow-inner font-mono leading-none">
+                        {Math.max(0, Math.floor(((timeLeft || 0) % 60) / 10))}
+                      </div>
+                      <div className={cn(
+                        "flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black shadow-inner font-mono leading-none",
+                        (timeLeft || 0) < 10 ? "text-rose-500" : "text-white"
+                      )}>
+                        {Math.max(0, (timeLeft || 0) % 10)}
+                      </div>
                     </div>
                   </div>
-                  <div className="text-xl font-black text-[#1a1d21] leading-none">:</div>
-                  <div className="flex gap-0.5">
-                    <div className="flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black text-white shadow-inner font-mono leading-none">
-                      {Math.max(0, Math.floor((timeLeft % 60) / 10))}
-                    </div>
-                    <div className={cn(
-                      "flex h-9 w-7 items-center justify-center rounded-md bg-[#1a1d21] text-xl font-black shadow-inner font-mono leading-none",
-                      timeLeft < 10 ? "text-rose-500" : "text-white"
-                    )}>
-                      {Math.max(0, timeLeft % 10)}
-                    </div>
-                  </div>
-                </div>
               </div>
               
-              <p className="text-[11px] font-black tracking-widest text-black/80">{periodId}</p>
+              <div className="flex flex-col items-end">
+                <p className="text-[10px] font-bold text-black/40 uppercase tracking-tighter leading-none mb-1">Period</p>
+                <p className="text-sm font-black tracking-widest text-black/80 font-mono leading-none">
+                  {periodId || "---"}
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -909,36 +1031,20 @@ export default function GamePage() {
         className="px-4"
         style={{ paddingLeft: '4px', paddingRight: '16px', marginLeft: '-1px', marginRight: '-1px', width: '375.333px', height: '864.667px' }}
       >
-        <div className="flex bg-[#1a1d21] p-1 rounded-2xl mb-6 border border-gray-800/50">
-          <button 
-            onClick={() => setActiveTab('game')}
-            className={cn(
-              "flex-1 py-3 rounded-xl text-xs font-bold transition-all",
-              activeTab === 'game' ? "bg-gradient-to-r from-[#ff8a71] to-[#ff5858] text-white shadow-lg" : "text-gray-500"
-            )}
-          >
-            Game history
-          </button>
-          <button 
-            onClick={() => setActiveTab('chart')}
-            className={cn(
-              "flex-1 py-3 rounded-xl text-xs font-bold transition-all",
-              activeTab === 'chart' ? "bg-[#2a2e35] text-gray-500" : "text-gray-500"
-            )}
-          >
-            Chart
-          </button>
-          <button 
-            onClick={() => setActiveTab('my')}
-            className={cn(
-              "flex-1 py-3 rounded-xl text-xs font-bold transition-all",
-              activeTab === 'my' ? "bg-[#2a2e35] text-gray-500" : "text-gray-500"
-            )}
-            style={{ borderStyle: 'none' }}
-          >
-            My history
-          </button>
-        </div>
+            <div className="flex bg-[#1a1d21] p-1 rounded-2xl mb-6 border border-gray-800/50">
+              {['game', 'chart', 'my'].map((tab) => (
+                <button 
+                  key={tab}
+                  onClick={() => setActiveTab(tab as any)}
+                  className={cn(
+                    "flex-1 py-3 rounded-xl text-xs font-bold transition-all capitalize",
+                    activeTab === tab ? "bg-gradient-to-r from-[#ff8a71] to-[#ff5858] text-white shadow-lg" : "text-gray-500"
+                  )}
+                >
+                  {tab === 'game' ? 'Game history' : tab === 'chart' ? 'Chart' : 'My history'}
+                </button>
+              ))}
+            </div>
 
         {activeTab === 'game' && (
           <div className="space-y-3">
@@ -948,9 +1054,11 @@ export default function GamePage() {
               <span className="text-center">Big Small</span>
               <span className="text-right">Color</span>
             </div>
-            {pagedHistory.map((game) => (
-              <div key={game.id} className="bg-[#1f2228] p-3 rounded-xl border border-gray-800 grid grid-cols-4 items-center">
-                <span className="text-xs font-mono text-gray-400">{game.periodId}</span>
+            {pagedHistory.map((game, idx) => (
+              <div key={game.id || `game-${idx}`} className="bg-[#1f2228] p-3 rounded-xl border border-gray-800 grid grid-cols-4 items-center">
+                <span className="text-[11px] font-mono font-bold text-gray-400">
+                  {game.periodId ? game.periodId.toString() : "---"}
+                </span>
                 <div className="flex justify-center">
                   <span className={cn("text-2xl font-black italic", 
                     game.resultNumber === 0 ? "text-rose-500" :
@@ -1069,9 +1177,11 @@ export default function GamePage() {
               </div>
 
               {/* Recent Results Rows */}
-              {history.slice(0, 10).map((game) => (
-                <div key={game.id} className="grid grid-cols-[repeat(13,1fr)] p-3 text-[10px] font-mono chart-row items-center">
-                  <div className="col-span-2 text-gray-500">{game.periodId.slice(-4)}</div>
+              {history.slice(0, 10).map((game, idx) => (
+                <div key={game.id || `chart-${idx}`} className="grid grid-cols-[repeat(13,1fr)] p-3 text-[10px] font-mono chart-row items-center">
+                  <div className="col-span-2 text-gray-500">
+                    {game.periodId ? game.periodId.toString().slice(-4) : "---"}
+                  </div>
                   {[0,1,2,3,4,5,6,7,8,9].map(n => (
                     <div key={n} className="flex justify-center items-center">
                       {game.resultNumber === n ? (
@@ -1097,8 +1207,8 @@ export default function GamePage() {
 
         {activeTab === 'my' && (
           <div className="space-y-4">
-            {pagedMyBets.map((bet) => (
-              <div key={bet.id} className="bg-[#1f2228] p-4 rounded-2xl border border-gray-800 flex items-center gap-4">
+            {pagedMyBets.map((bet, idx) => (
+              <div key={bet.id || `bet-${idx}`} className="bg-[#1f2228] p-4 rounded-2xl border border-gray-800 flex items-center gap-4">
                 {!isNaN(Number(bet.selection)) ? (
                   <div className={cn(
                     "w-14 h-14 rounded-2xl flex items-center justify-center text-xl font-black italic uppercase shadow-lg shrink-0",
@@ -1124,7 +1234,9 @@ export default function GamePage() {
                 <div className="flex-1 min-w-0">
                   <p className="font-mono font-bold text-sm text-gray-200 truncate">{bet.periodId}</p>
                   <p className="text-[10px] text-gray-500 mt-1">
-                    {bet.createdAt?.toDate().toISOString().slice(0, 19).replace('T', ' ')}
+                    {bet.createdAt && typeof bet.createdAt.toDate === 'function' 
+                      ? bet.createdAt.toDate().toISOString().slice(0, 19).replace('T', ' ') 
+                      : 'Pending...'}
                   </p>
                 </div>
                 <div className="text-right shrink-0">

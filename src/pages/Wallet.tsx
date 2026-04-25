@@ -11,15 +11,18 @@ import {
   where, 
   orderBy, 
   limit, 
-  onSnapshot
+  onSnapshot,
+  getDocs
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Transaction } from '../types';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
 
 export default function Wallet() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [isMusicOn, setIsMusicOn] = useState(() => {
     const saved = localStorage.getItem('music_enabled');
@@ -32,20 +35,23 @@ export default function Wallet() {
 
   useEffect(() => {
     if (!user) return;
-    const q = query(
-      collection(db, 'transactions'),
-      where('uid', '==', user.uid),
-      where('type', 'in', ['deposit', 'withdraw']),
-      orderBy('createdAt', 'desc'),
-      limit(20)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const trans = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
-      setTransactions(trans);
-    });
-
-    return () => unsubscribe();
+    const fetchTransactions = async () => {
+      const q = query(
+        collection(db, 'transactions'),
+        where('uid', '==', user.uid),
+        where('type', 'in', ['deposit', 'withdraw']),
+        orderBy('createdAt', 'desc'),
+        limit(20)
+      );
+      try {
+        const snapshot = await getDocs(q);
+        const trans = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) } as Transaction));
+        setTransactions(trans);
+      } catch (e) {
+        console.error("Wallet fetch error:", e);
+      }
+    };
+    fetchTransactions();
   }, [user]);
 
   return (
