@@ -53,6 +53,7 @@ import {
 } from '../../services/adminService';
 import { formatCurrency, cn } from '../../lib/utils';
 import { toast } from 'sonner';
+import AssetManagement from './AssetManagement';
 import { db } from '../../firebase';
 import { collection, query, getDocs, limit, where, onSnapshot, orderBy, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { GameType } from '../../types';
@@ -290,7 +291,7 @@ export default function AdminDashboard() {
             onClick={() => toggleMenu('Manage')}
             onItemClick={(item: string) => setCurrentView(item)}
             items={[
-               'Users', 'Daily Salary', 'Gift Code', 'Banner Settings', 'Popup Settings', 'Telegram', 
+               'Users', 'Daily Salary', 'Gift Code', 'Banner Settings', 'Popup Settings', 'Asset Management', 'Telegram', 
                'Add Admin', 'Demo User', 'Agent User', 'Edit Bank Details',
                'Withdrawal Limit', 'First Deposit Bonus', 'Update Game Commission',
                'Update Turnover', 'Add Advanced Functions', 'Hold Wallet', 'Get User Report'
@@ -1597,6 +1598,8 @@ function AdminSubView({ view, settings, updateSetting, onBack, pendingControls, 
               </div>
            </div>
         )}
+
+        {view === 'Asset Management' && <AssetManagement />}
 
         {['Telegram', 'Add Admin', 'Demo User', 'Agent User', 'Edit Bank Details', 'Add Advanced Functions', 'Hold Wallet', 'Get User Report'].includes(view) && (
            <div className="flex flex-col items-center justify-center py-20 bg-gray-50 rounded-3xl border-2 border-dashed border-gray-200">

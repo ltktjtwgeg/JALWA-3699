@@ -41,6 +41,29 @@ import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { query } from './src/lib/mysql'; 
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
+import multer from 'multer';
+
+// --- ASSET MANAGEMENT STORAGE ---
+const assetStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const folder = (req.body.folder || '').replace(/\.\./g, '');
+    const targetDir = path.join(process.cwd(), 'public', 'images', folder);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    cb(null, targetDir);
+  },
+  filename: (req, file, cb) => {
+    const customName = req.body.filename;
+    const ext = path.extname(file.originalname).toLowerCase();
+    const finalName = customName ? (customName.toLowerCase().endsWith(ext) ? customName : `${customName}${ext}`) : file.originalname;
+    cb(null, finalName);
+  }
+});
+const assetUpload = multer({ 
+  storage: assetStorage,
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
 
 // Global service instances
 let dbInstance: admin.firestore.Firestore;
@@ -438,6 +461,55 @@ async function startServer() {
   const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
+
+  // Asset Management API
+  app.post('/api/admin/assets/upload', assetUpload.single('file'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    res.json({ 
+      success: true, 
+      message: 'File uploaded successfully',
+      path: `/images/${req.body.folder}/${req.file.filename}`
+    });
+  });
+
+  app.get('/api/admin/assets/list', (req, res) => {
+    const folder = (req.query.folder as string || '').replace(/\.\./g, '');
+    const basePath = path.join(process.cwd(), 'public', 'images');
+    const targetDir = path.join(basePath, folder);
+    
+    if (!fs.existsSync(targetDir)) {
+      if (folder === '') {
+         fs.mkdirSync(targetDir, { recursive: true });
+      } else {
+        return res.json({ folders: [], files: [] });
+      }
+    }
+
+    try {
+      const items = fs.readdirSync(targetDir, { withFileTypes: true });
+      const folders = items.filter(i => i.isDirectory()).map(i => i.name);
+      const files = items.filter(i => !i.isDirectory()).map(i => i.name);
+      res.json({ folders, files });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete('/api/admin/assets/delete', (req, res) => {
+     try {
+       const { folder, filename } = req.body;
+       if (!filename) return res.status(400).json({ error: 'Filename required' });
+       const targetPath = path.join(process.cwd(), 'public', 'images', (folder || '').replace(/\.\./g, ''), filename.replace(/\.\./g, ''));
+       if (fs.existsSync(targetPath)) {
+         fs.unlinkSync(targetPath);
+         res.json({ success: true });
+       } else {
+         res.status(404).json({ error: 'File not found' });
+       }
+     } catch (e: any) {
+       res.status(500).json({ error: e.message });
+     }
+  });
 
   // Background Init (Non-blocking but critical)
   initFirestore().then(async () => {
